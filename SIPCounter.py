@@ -10,7 +10,7 @@ class SIPCounter(object):
     call status tracking tool. It merely counts the messages sent/received.
     It's primary use would be to monitor links for certain type of events, for
     example an occurrences of certain SIP errors or provides basic statistics.
-    For instance using the convenicence pprint method you can visualize the type
+    For instance using the convenience pprint method you can visualize the type
     and number of SIP messages you are interested in.
 
         IPCounter               INVITE    NOTIFY    REFER    REGISTER    100       200       202
@@ -65,7 +65,7 @@ class SIPCounter(object):
         host_filter: serves as a host capture filter, if the source and/or
                     destination IP address of the SIP message is provided it
                     will be counted only of either the origin (srcip) ir the
-                    recepient (dstip) of the SIP message is in this set.
+                    recipient (dstip) of the SIP message is in this set.
                     For example to pass this argument:
 
                     host_filter=set(['1.1.1.1', '2.2.2.2', '3.3.3.3'])
@@ -94,7 +94,7 @@ class SIPCounter(object):
 
                     known_ports=set(['5070', '5080'])
 
-        data:       In rare situations there may be a need to initialze this
+        data:       In rare situations there may be a need to initialize this
                     object with some data prior to adding the first SIP
                     message to the internal 'self._data' using the 'add'
                     or 'update' methods. The internal SIP data store of this
@@ -118,7 +118,7 @@ class SIPCounter(object):
                        known_servers (set): known SIP servers/proxies
                        known_ports (set): known SIP services ports in addition
                                           to the well-known port 5060 and 5061
-                       data (dict): interal data storage of counters
+                       data (dict): internal data storage of counters
                        name (string): name of this instance
         """
         self.sip_filter = kwargs.get('sip_filter', set(['.*']))
@@ -413,7 +413,7 @@ class SIPCounter(object):
         """
         Calculates and returns a dictionary with the summary of all
         the Counters either seen in the internal self._data store or in
-        a simiar data store provided in optional 'data' argument.
+        a similar data store provided in optional 'data' argument.
         :param data: (dict): optional self._data store like dictionary
         :return: (dict): with the summary of all Counters
         """
@@ -446,8 +446,8 @@ class SIPCounter(object):
         self._data store. The representation of the self._data is subjective,
         therefore it was not the primary objective of this Class is provide
         a full fledged pretty print method. Consumers are encouraged to write
-        their own functions to represent the contenct of this internal data
-        store the way which best suits their needs.
+        their own functions to present the content of the internal data
+        store the way that best suits their needs.
         :param links: (bool): if the link lines are to be printed
         :param summary: (bool): if summary line is to be printed in the end
         :param depth: (int): indicating how deep into the key, which is a
