@@ -617,7 +617,6 @@ class SIPCounter(object):
 
 if __name__ == '__main__':
     import random
-    random.randrange(0, 1000)
     d = {('1.1.1.1', '2.2.2.2', 'TLS', '5061'): {'->': Counter(), '<-': Counter()},
          ('1.1.1.1', '2.2.2.2', 'TCP', '5060'): {'->': Counter(), '<-': Counter()},
          ('1.1.1.1', '2.2.2.2', 'TCP', '5062'): {'->': Counter(), '<-': Counter()},

@@ -18,12 +18,12 @@
       <file leaf-file-name="SIPCounter.py" pinned="false" current-in-tab="true">
         <entry file="file://$PROJECT_DIR$/SIPCounter.py">
           <provider selected="true" editor-type-id="text-editor">
-            <state relative-caret-position="181">
-              <caret line="608" column="36" lean-forward="true" selection-start-line="608" selection-start-column="36" selection-end-line="608" selection-end-column="36" />
+            <state relative-caret-position="307">
+              <caret line="650" column="99" lean-forward="true" selection-start-line="650" selection-start-column="99" selection-end-line="650" selection-end-column="99" />
               <folding>
                 <element signature="e#0#57#0" expanded="true" />
-                <element signature="e#1510#1880#0" expanded="false" />
-                <element signature="e#27738#28149#0" expanded="false" />
+                <element signature="e#1509#1879#0" expanded="false" />
+                <element signature="e#27705#28116#0" expanded="false" />
               </folding>
             </state>
           </provider>
@@ -73,8 +73,6 @@
       <foldersAlwaysOnTop value="true" />
     </navigator>
     <panes>
-      <pane id="Scope" />
-      <pane id="Scratches" />
       <pane id="ProjectPane">
         <subPane>
           <expand>
@@ -86,6 +84,8 @@
           <select />
         </subPane>
       </pane>
+      <pane id="Scope" />
+      <pane id="Scratches" />
     </panes>
   </component>
   <component name="PropertiesComponent">
@@ -204,7 +204,21 @@
       <option name="project" value="LOCAL" />
       <updated>1514256319911</updated>
     </task>
-    <option name="localTasksCounter" value="6" />
+    <task id="LOCAL-00006" summary="First commit">
+      <created>1514256564046</created>
+      <option name="number" value="00006" />
+      <option name="presentableId" value="LOCAL-00006" />
+      <option name="project" value="LOCAL" />
+      <updated>1514256564046</updated>
+    </task>
+    <task id="LOCAL-00007" summary="First commit">
+      <created>1514256752640</created>
+      <option name="number" value="00007" />
+      <option name="presentableId" value="LOCAL-00007" />
+      <option name="project" value="LOCAL" />
+      <updated>1514256752640</updated>
+    </task>
+    <option name="localTasksCounter" value="8" />
     <servers />
   </component>
   <component name="ToolWindowManager">
@@ -255,8 +269,8 @@
           <caret line="0" column="0" lean-forward="false" selection-start-line="0" selection-start-column="0" selection-end-line="0" selection-end-column="0" />
           <folding>
             <element signature="e#0#57#0" expanded="true" />
-            <element signature="e#1510#1880#0" expanded="false" />
-            <element signature="e#27738#28149#0" expanded="false" />
+            <element signature="e#1509#1879#0" expanded="false" />
+            <element signature="e#27705#28116#0" expanded="false" />
           </folding>
         </state>
       </provider>
@@ -267,8 +281,8 @@
           <caret line="0" column="0" lean-forward="false" selection-start-line="0" selection-start-column="0" selection-end-line="0" selection-end-column="0" />
           <folding>
             <element signature="e#0#57#0" expanded="true" />
-            <element signature="e#1510#1880#0" expanded="false" />
-            <element signature="e#27738#28149#0" expanded="false" />
+            <element signature="e#1509#1879#0" expanded="false" />
+            <element signature="e#27705#28116#0" expanded="false" />
           </folding>
         </state>
       </provider>
@@ -279,8 +293,8 @@
           <caret line="0" column="0" lean-forward="false" selection-start-line="0" selection-start-column="0" selection-end-line="0" selection-end-column="0" />
           <folding>
             <element signature="e#0#57#0" expanded="true" />
-            <element signature="e#1510#1880#0" expanded="false" />
-            <element signature="e#27738#28149#0" expanded="false" />
+            <element signature="e#1509#1879#0" expanded="false" />
+            <element signature="e#27705#28116#0" expanded="false" />
           </folding>
         </state>
       </provider>
@@ -291,8 +305,8 @@
           <caret line="0" column="0" lean-forward="false" selection-start-line="0" selection-start-column="0" selection-end-line="0" selection-end-column="0" />
           <folding>
             <element signature="e#0#57#0" expanded="true" />
-            <element signature="e#1510#1880#0" expanded="false" />
-            <element signature="e#27738#28149#0" expanded="false" />
+            <element signature="e#1509#1879#0" expanded="false" />
+            <element signature="e#27705#28116#0" expanded="false" />
           </folding>
         </state>
       </provider>
@@ -303,8 +317,8 @@
           <caret line="0" column="0" lean-forward="false" selection-start-line="0" selection-start-column="0" selection-end-line="0" selection-end-column="0" />
           <folding>
             <element signature="e#0#57#0" expanded="true" />
-            <element signature="e#1510#1880#0" expanded="false" />
-            <element signature="e#27738#28149#0" expanded="false" />
+            <element signature="e#1509#1879#0" expanded="false" />
+            <element signature="e#27705#28116#0" expanded="false" />
           </folding>
         </state>
       </provider>
@@ -315,8 +329,8 @@
           <caret line="0" column="0" lean-forward="false" selection-start-line="0" selection-start-column="0" selection-end-line="0" selection-end-column="0" />
           <folding>
             <element signature="e#0#57#0" expanded="true" />
-            <element signature="e#1510#1880#0" expanded="false" />
-            <element signature="e#27738#28149#0" expanded="false" />
+            <element signature="e#1509#1879#0" expanded="false" />
+            <element signature="e#27705#28116#0" expanded="false" />
           </folding>
         </state>
       </provider>
@@ -327,8 +341,8 @@
           <caret line="0" column="0" lean-forward="false" selection-start-line="0" selection-start-column="0" selection-end-line="0" selection-end-column="0" />
           <folding>
             <element signature="e#0#57#0" expanded="true" />
-            <element signature="e#1510#1880#0" expanded="false" />
-            <element signature="e#27738#28149#0" expanded="false" />
+            <element signature="e#1509#1879#0" expanded="false" />
+            <element signature="e#27705#28116#0" expanded="false" />
           </folding>
         </state>
       </provider>
@@ -339,8 +353,8 @@
           <caret line="0" column="0" lean-forward="false" selection-start-line="0" selection-start-column="0" selection-end-line="0" selection-end-column="0" />
           <folding>
             <element signature="e#0#57#0" expanded="true" />
-            <element signature="e#1510#1880#0" expanded="false" />
-            <element signature="e#27738#28149#0" expanded="false" />
+            <element signature="e#1509#1879#0" expanded="false" />
+            <element signature="e#27705#28116#0" expanded="false" />
           </folding>
         </state>
       </provider>
@@ -351,8 +365,8 @@
           <caret line="0" column="0" lean-forward="false" selection-start-line="0" selection-start-column="0" selection-end-line="0" selection-end-column="0" />
           <folding>
             <element signature="e#0#57#0" expanded="true" />
-            <element signature="e#1510#1880#0" expanded="false" />
-            <element signature="e#27738#28149#0" expanded="false" />
+            <element signature="e#1509#1879#0" expanded="false" />
+            <element signature="e#27705#28116#0" expanded="false" />
           </folding>
         </state>
       </provider>
@@ -363,8 +377,8 @@
           <caret line="0" column="0" lean-forward="false" selection-start-line="0" selection-start-column="0" selection-end-line="0" selection-end-column="0" />
           <folding>
             <element signature="e#0#57#0" expanded="true" />
-            <element signature="e#1510#1880#0" expanded="false" />
-            <element signature="e#27738#28149#0" expanded="false" />
+            <element signature="e#1509#1879#0" expanded="false" />
+            <element signature="e#27705#28116#0" expanded="false" />
           </folding>
         </state>
       </provider>
@@ -375,8 +389,8 @@
           <caret line="0" column="0" lean-forward="false" selection-start-line="0" selection-start-column="0" selection-end-line="0" selection-end-column="0" />
           <folding>
             <element signature="e#0#57#0" expanded="true" />
-            <element signature="e#1510#1880#0" expanded="false" />
-            <element signature="e#27738#28149#0" expanded="false" />
+            <element signature="e#1509#1879#0" expanded="false" />
+            <element signature="e#27705#28116#0" expanded="false" />
           </folding>
         </state>
       </provider>
@@ -387,8 +401,8 @@
           <caret line="0" column="0" lean-forward="false" selection-start-line="0" selection-start-column="0" selection-end-line="0" selection-end-column="0" />
           <folding>
             <element signature="e#0#57#0" expanded="true" />
-            <element signature="e#1510#1880#0" expanded="false" />
-            <element signature="e#27738#28149#0" expanded="false" />
+            <element signature="e#1509#1879#0" expanded="false" />
+            <element signature="e#27705#28116#0" expanded="false" />
           </folding>
         </state>
       </provider>
@@ -399,8 +413,8 @@
           <caret line="0" column="0" lean-forward="false" selection-start-line="0" selection-start-column="0" selection-end-line="0" selection-end-column="0" />
           <folding>
             <element signature="e#0#57#0" expanded="true" />
-            <element signature="e#1510#1880#0" expanded="false" />
-            <element signature="e#27738#28149#0" expanded="false" />
+            <element signature="e#1509#1879#0" expanded="false" />
+            <element signature="e#27705#28116#0" expanded="false" />
           </folding>
         </state>
       </provider>
@@ -411,8 +425,8 @@
           <caret line="0" column="0" lean-forward="false" selection-start-line="0" selection-start-column="0" selection-end-line="0" selection-end-column="0" />
           <folding>
             <element signature="e#0#57#0" expanded="true" />
-            <element signature="e#1510#1880#0" expanded="false" />
-            <element signature="e#27738#28149#0" expanded="false" />
+            <element signature="e#1509#1879#0" expanded="false" />
+            <element signature="e#27705#28116#0" expanded="false" />
           </folding>
         </state>
       </provider>
@@ -423,8 +437,8 @@
           <caret line="0" column="0" lean-forward="false" selection-start-line="0" selection-start-column="0" selection-end-line="0" selection-end-column="0" />
           <folding>
             <element signature="e#0#57#0" expanded="true" />
-            <element signature="e#1510#1880#0" expanded="false" />
-            <element signature="e#27738#28149#0" expanded="false" />
+            <element signature="e#1509#1879#0" expanded="false" />
+            <element signature="e#27705#28116#0" expanded="false" />
           </folding>
         </state>
       </provider>
@@ -435,8 +449,20 @@
           <caret line="0" column="0" lean-forward="false" selection-start-line="0" selection-start-column="0" selection-end-line="0" selection-end-column="0" />
           <folding>
             <element signature="e#0#57#0" expanded="true" />
-            <element signature="e#1510#1880#0" expanded="false" />
-            <element signature="e#27738#28149#0" expanded="false" />
+            <element signature="e#1509#1879#0" expanded="false" />
+            <element signature="e#27705#28116#0" expanded="false" />
+          </folding>
+        </state>
+      </provider>
+    </entry>
+    <entry file="file://$PROJECT_DIR$/SIPCounter.py">
+      <provider selected="true" editor-type-id="text-editor">
+        <state relative-caret-position="0">
+          <caret line="0" column="0" lean-forward="false" selection-start-line="0" selection-start-column="0" selection-end-line="0" selection-end-column="0" />
+          <folding>
+            <element signature="e#0#57#0" expanded="true" />
+            <element signature="e#1509#1879#0" expanded="false" />
+            <element signature="e#27705#28116#0" expanded="false" />
           </folding>
         </state>
       </provider>
@@ -467,12 +493,12 @@
     </entry>
     <entry file="file://$PROJECT_DIR$/SIPCounter.py">
       <provider selected="true" editor-type-id="text-editor">
-        <state relative-caret-position="181">
-          <caret line="608" column="36" lean-forward="true" selection-start-line="608" selection-start-column="36" selection-end-line="608" selection-end-column="36" />
+        <state relative-caret-position="307">
+          <caret line="650" column="99" lean-forward="true" selection-start-line="650" selection-start-column="99" selection-end-line="650" selection-end-column="99" />
           <folding>
             <element signature="e#0#57#0" expanded="true" />
-            <element signature="e#1510#1880#0" expanded="false" />
-            <element signature="e#27738#28149#0" expanded="false" />
+            <element signature="e#1509#1879#0" expanded="false" />
+            <element signature="e#27705#28116#0" expanded="false" />
           </folding>
         </state>
       </provider>
