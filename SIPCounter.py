@@ -103,7 +103,7 @@ class SIPCounter(object):
                     {('server ip', 'client ip', 'protocol', 'service port') :
                       {'msgdir' : collections.Counter()}, ....}
 
-                    For example to initialize an istance with some data:
+                    For example to initialize an instance with some data:
 
                     data={('1.1.1.1', '2.2.2.2', 'tcp', '5060'):
                     {'<-': Counter({'INVITE': 1}), '->': Counter({'200': 1})}}
