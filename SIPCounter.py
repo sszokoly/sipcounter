@@ -5,7 +5,23 @@ from copy import deepcopy
 
 class SIPCounter(object):
     """
-    This class provides a SIP Counter.
+    This class provides a SIP Counter. It can be used to track the number of
+    SIP requests and corresponding responses. It is not meant to be a stateful
+    call status tracking tool. It merely counts the messages sent/received.
+    It's primary use would be to monitor links for certain type of events, for
+    example an occurrences of certain SIP errors or provides basic statistics.
+    For instance using the convenicence pprint method you can visualize the type
+    and number of SIP messages you are interested in.
+
+        IPCounter               INVITE    NOTIFY    REFER    REGISTER    100       200       202
+                              ---> <--- ---> <--- ---> <--- ---> <--- ---> <--- ---> <--- ---> <---
+    1.1.1.1-TCP-5060-2.2.2.2     0    0    0    0    0    0  641    0    0  795    0    0    0    0
+    1.1.1.1-TCP-5062-2.2.2.2   934    0    0    0    0    0    0    0    0    0    0  670    0    0
+    1.1.1.1-TLS-5061-2.2.2.2   838    0    0    0    0    0  132    0    0  582    0   11    0    0
+    1.1.1.1-TCP-5060-3.3.3.3     0    0    0    0    0  122    0    0    0    0    0    0  378    0
+    1.1.1.1-UDP-5060-3.3.3.3     0    0    0  415    0    0    0    0    0    0  799    0    0    0
+    SUMMARY                   1772    0    0  415    0  122  773    0    0 1377  799  681  378    0
+
     """
     SORT_ORDER = {
         'INVITE': 0,
