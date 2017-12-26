@@ -131,17 +131,19 @@ class SIPCounter(object):
         self.name = kwargs.get('name', '')
         self.dirIn = '<-'
         self.dirOut = '->'
+
     @property
     def data(self):
         return self._data
+
     def add(self, sipmsg, msgdir=None, *args):
         """
         :param sipmsg: (string or list): SIP message either as a string or as
                         a list of strings (header lines)
         :param msgdir: (string of 'IN' or 'OUT'): determines the direction of
                         the message and the order in which the communicating
-                        parties are place in the internal dictionary key, that
-                        is first is the Server/Proxy followed by the Client.
+                        parties are placed into the internal dictionary as key,
+                        first is the Server/Proxy followed by the Client.
         :param args: (tuple of strings): this tuple contains in the order
                       depicted below the details of the communicating parties
                       (aka link):
@@ -151,19 +153,19 @@ class SIPCounter(object):
                       the proto is optional, if not provided it will be
                       extracted from the top Via header.
 
-                      For exaple both are valid:
+                      For exaple both are valid for args:
 
                       ('1.1.1.1', '5060', '2.2.2.2', '34556', 'TCP')
                       ('1.1.1.1', '5060', '2.2.2.2', '34556')
 
                       Since the srcport is a well-known SIP service port
                       and the other is not then by default the message above
-                      will be places into the internal dictionary as a key
+                      will be places into the internal dictionary - as a key -
                       as follows:
 
                       ('1.1.1.1', '2.2.2.2', 'tcp', '5060')
 
-                      Any further messages between these two enties using TCP
+                      Any further messages between these two entities using TCP
                       and service port 5060 will be counted under this key.
         :return: None
         """
@@ -254,6 +256,7 @@ class SIPCounter(object):
             self._data.setdefault(tuple(link), {}
                      ).setdefault(msgdir, Counter()
                      ).update([msgtype])
+
     def subtract(self, iterable):
         """
         Convenience method which serves to modify the internal Counters
@@ -269,6 +272,7 @@ class SIPCounter(object):
             self.update(iterable, subtract=True)
         else:
             raise TypeError('can only invoke with SIPCounter type dictionaries')
+
     def update(self, iterable, subtract=False):
         """
         This method serves to modify the internal Counters directly.
@@ -301,6 +305,7 @@ class SIPCounter(object):
                         self._data.setdefault(k, {}
                                  ).setdefault(k2, Counter()
                                  ).subtract(v2)
+
     def clear(self):
         """
         Clears the internal data store. This can be used when for example
@@ -308,18 +313,21 @@ class SIPCounter(object):
         :return: None
         """
         self._data.clear()
+
     def iteritems(self):
         """
         Returns the key,value pairs of the self._data storage.
         :return: (generator)
         """
         return self._data.iteritems()
+
     def iterkeys(self):
         """
         Returns the keys (aka links) of the self._data storage.
         :return: (generator)
         """
         return self._data.iterkeys()
+
     def keys(self):
         """
         Provides the list of internal storage keys (aka links) sorted
@@ -327,6 +335,7 @@ class SIPCounter(object):
         :return: (list)
         """
         return sorted(self._data.iterkeys(), key=itemgetter(0, 1, 2))
+
     def groupby(self, depth=4):
         """
         Has two purposes. One is to group (or add) together the Counters
@@ -377,6 +386,7 @@ class SIPCounter(object):
                               ).update(self._data[link][k])
         l = sorted(grouped.iterkeys(), key=itemgetter(*range(0, depth)))
         return OrderedDict((k, grouped[k]) for k in l)
+
     def most_common(self, n=None, depth=4):
         """
         Calculates the list of links with the highest total number of SIP
@@ -398,6 +408,7 @@ class SIPCounter(object):
         if n is not None:
             most = most[0:n]
         return OrderedDict([(x, grouped[x]) for x in most])
+
     def summary(self, data=None):
         """
         Calculates and returns a dictionary with the summary of all
@@ -413,6 +424,7 @@ class SIPCounter(object):
             for direction, counter in v.iteritems():
                 d.setdefault(direction, Counter()).update(counter)
         return d
+
     def elements(self, data=None):
         """
         Provides the list of SIP message types captured either in the internal
@@ -427,6 +439,7 @@ class SIPCounter(object):
                     key=lambda x: self.SORT_ORDER.get(x, 17))
         responses = sorted((x for x in s if x.isdigit()))
         return requests + responses
+
     def pprint(self, links=True, summary=True, depth=4, header=True, data=None):
         """
         Convenience method to provide a basic readable output of the internal
@@ -524,10 +537,12 @@ class SIPCounter(object):
                         )))
         output.append('')
         return '\n'.join(output)
+
     def __contains__(self, elem):
         if '.' in elem:
             return any(elem in x for x in self._data)
         return any(elem in x for x in self.summary())
+
     def __add__(self, other):
         if type(self) != type(other):
             raise TypeError('can only add SIPCounter to another SIPCounter')
@@ -546,6 +561,7 @@ class SIPCounter(object):
                           known_ports=known_ports,
                           name=name,
                           data=new)
+
     def __sub__(self, other):
         if type(self) != type(other):
             raise TypeError('can only subtract SIPCounter from another SIPCounter')
@@ -564,6 +580,7 @@ class SIPCounter(object):
                           known_ports=known_ports,
                           name=name,
                           data=new)
+
     def __iadd__(self, other):
         if type(self) != type(other):
             raise TypeError('can only add SIPCounter to another SIPCounter')
@@ -574,6 +591,7 @@ class SIPCounter(object):
         self.known_ports = self.known_ports.union(other.known_ports)
         self.name = ' '.join((self.name, other.name))
         self.update(other.data)
+
     def __isub__(self, other):
         if type(self) != type(other):
             raise TypeError('can only subtract SIPCounter from another SIPCounter')
@@ -584,6 +602,7 @@ class SIPCounter(object):
         self.known_ports = self.known_ports - other.known_ports
         self.name = ' '.join(x for x in self.name.split() if x != other.name)
         self.update(other, subtract=True)
+
     def __repr__(self):
         s = 'SIPCounter(name=%s, sip_filter=%s, host_filter=%s, known_servers=%s, known_ports=%s, data=%s)'
         return s % (self.name,
@@ -592,9 +611,9 @@ class SIPCounter(object):
                     self.known_servers,
                     self.known_ports,
                     self.data)
+
     def __str__(self):
         return '<%s instance at %s>' % (self.__class__.__name__, id(self))
-
 
 if __name__ == '__main__':
     import random
@@ -631,3 +650,4 @@ if __name__ == '__main__':
     sipcounter = SIPCounter(data=d, name='SIPCounter')
     print sipcounter.pprint()
     print sipcounter.pprint(data=sipcounter.most_common(n=2, depth=3), header=False, summary=False)
+    
