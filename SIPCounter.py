@@ -646,6 +646,6 @@ if __name__ == '__main__':
         ('NOTIFY' for x in xrange(random.randrange(0, 1000))))
     d[('1.1.1.1', '3.3.3.3', 'UDP', '5060')]['->'].update(
         ('200' for x in xrange(random.randrange(0, 1000))))
-    sipcounter = SIPCounter(data=d, name='SIPCounter')
+    sipcounter = SIPCounter(data=d, name='Switch-A')
     print sipcounter.pprint()
     print sipcounter.pprint(data=sipcounter.most_common(n=2, depth=3), header=False, summary=False)
