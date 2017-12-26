@@ -610,7 +610,7 @@ class SIPCounter(object):
                     self.host_filter,
                     self.known_servers,
                     self.known_ports,
-                    self.data)
+                    self._data)
 
     def __str__(self):
         return '<%s instance at %s>' % (self.__class__.__name__, id(self))
@@ -650,4 +650,3 @@ if __name__ == '__main__':
     sipcounter = SIPCounter(data=d, name='SIPCounter')
     print sipcounter.pprint()
     print sipcounter.pprint(data=sipcounter.most_common(n=2, depth=3), header=False, summary=False)
-    
