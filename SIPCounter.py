@@ -648,4 +648,4 @@ if __name__ == '__main__':
         ('200' for x in xrange(random.randrange(0, 1000))))
     sipcounter = SIPCounter(data=d, name='Switch-A')
     print sipcounter.pprint()
-    print sipcounter.pprint(data=sipcounter.most_common(n=2, depth=3), header=False, summary=False)
+    print sipcounter.pprint(data=sipcounter.most_common(n=2, depth=2), header=False, summary=False)
