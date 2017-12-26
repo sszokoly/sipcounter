@@ -453,10 +453,10 @@ class SIPCounter(object):
         :param depth: (int): indicating how deep into the key, which is a
         tuple of potentially four strings, the method should look into when
         grouping the Counters together.
-        :param header: (bool): if the header are to be printed
+        :param header: (bool): if the header is to be printed
         :param data: optional self._data store like dictionary, this may be
-                     used more often. For example to pprint the most_common
-                     10 links one can use this as follows:
+                     used more often. For example to pprint the busiest
+                     5 links one can use this as follows:
 
                      print sipcounter.pprint(data=sipcounter.most_common(n=5))
 
@@ -570,10 +570,10 @@ class SIPCounter(object):
         known_servers = self.known_servers - other.known_servers
         known_ports = self.known_ports - other.known_ports
         name = ' '.join(x for x in self.name.split() if x != other.name)
-        old = deepcopy(self._data)
+        dup = deepcopy(self._data)
         self.update(other, subtract=True)
         new = deepcopy(self._data)
-        self._data = old
+        self._data = dup
         return SIPCounter(sip_filte=sip_filter,
                           host_filter=host_filter,
                           known_servers=known_servers,
@@ -583,7 +583,7 @@ class SIPCounter(object):
 
     def __iadd__(self, other):
         if type(self) != type(other):
-            raise TypeError('can only add SIPCounter to another SIPCounter')
+            raise TypeError('can only add to SIPCounter another SIPCounter')
         self.sip_filter = self.sip_filter.union(other.sip_filter)
         self.reSIPFilter = re.compile(r'(%s)' % '|'.join(self.sip_filter))
         self.host_filter = self.host_filter.union(other.host_filter)
@@ -594,7 +594,7 @@ class SIPCounter(object):
 
     def __isub__(self, other):
         if type(self) != type(other):
-            raise TypeError('can only subtract SIPCounter from another SIPCounter')
+            raise TypeError('can only subtract from a SIPCounter another SIPCounter')
         self.sip_filter = self.sip_filter - other.sip_filter
         self.reSIPFilter = re.compile(r'(%s)' % '|'.join(self.sip_filter))
         self.host_filter = self.host_filter - other.host_filter
