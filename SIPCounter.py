@@ -131,7 +131,9 @@ class SIPCounter(object):
         self.name = kwargs.get('name', '')
         self.dirIn = '<-'
         self.dirOut = '->'
-
+        self.reReINVITE = re.compile(r'(To:|t:) .*(tag=)', re.MULTILINE)
+        self.reCSeq = re.compile(r'(CSeq: .*)', re.MULTILINE)
+        self.reVia = re.compile(r'(Via:|v:) .*', re.MULTILINE)
     @property
     def data(self):
         return self._data
@@ -169,35 +171,25 @@ class SIPCounter(object):
                       and service port 5060 will be counted under this key.
         :return: None
         """
-        srcport, srcip, dstip, dstport, proto = '', '', '', '', ''
         if args:
             (srcip, srcport, dstip, dstport), proto = args[0:4], args[4:]
             if self.host_filter and (srcip not in self.host_filter and
                                      dstip not in self.host_filter):
                 return
-        if isinstance(sipmsg, str):
-            sipmsg = sipmsg.splitlines()
-        # Determining msgtype
-        try:
-            if sipmsg[0].startswith('SIP'):
-                msgtype = sipmsg[0].split(' ', 2)[1]
+
+        if sipmsg.startswith('SIP'):
+            msgtype = sipmsg.split(' ', 2)[1]
+        else:
+            msgtype = sipmsg.split(' ', 1)[0]
+            if msgtype == 'INVITE' and self.reReINVITE.search(sipmsg):
+                msgtype = 'ReINVITE'
+            m = self.reCSeq.search(sipmsg)
+            if m:
+                method = m.group().split()[2]
+            elif msgtype[0].isdigit():
+                method = 'UNKNOWN'
             else:
-                msgtype = sipmsg[0].split(' ', 1)[0]
-                if msgtype == 'INVITE':
-                    toHeader = next(x for x in sipmsg if x.startswith('To:') or
-                                                         x.startswith('t:'))
-                    if 'tag=' in toHeader:
-                        msgtype = 'ReINVITE'
-            try:
-                cseqHeader = next(x for x in sipmsg if x.startswith('CSeq'))
-                method = cseqHeader.split()[2]
-            except:
-                if msgtype[0].isdigit():
-                    method = 'UNKNOWN'
-                else:
-                    method = msgtype
-        except:
-            method, msgtype = 'UNKNOWN', 'UNKNOWN'
+                method = msgtype
         # Determining direction
         if msgdir is not None:
             if msgdir.upper() == 'IN':
@@ -240,17 +232,15 @@ class SIPCounter(object):
             # Determining protocol
             if not proto:
                 try:
-                    viaHeader = next(x for x in sipmsg if
-                                        x.startswith('Via:') or
-                                        x.startswith('v:'))
-                    proto = viaHeader[13:16]
+                    headerVia = next(x for x in sipmsg if x.startswith('Via:')
+                                                       or x.startswith('v:'))
+                    proto = headerVia[13:16]
                 except:
                     proto = 'udp'
             link.append(proto.lower())
             link.append(service_port)
         else:
             msgdir = '<->'
-            srcport, srcip, dstip, dstport, proto = '', '', '', '', ''
             link = ('', '', '', '')
         if self.reSIPFilter.match(method) and self.reSIPFilter.match(msgtype):
             self._data.setdefault(tuple(link), {}
@@ -369,6 +359,8 @@ class SIPCounter(object):
         ('1.1.1.1', '3.3.3.3'), {'<-': Counter({'UPDATE': 1})}),
         ...])
 
+        The other purpose is to order the grouped dictionary.
+
         :param depth: (int): indicating how deep into the key, which is a
         tuple of potentially four strings, the method should look into when
         grouping the Counters together.
@@ -384,8 +376,10 @@ class SIPCounter(object):
                         grouped.setdefault(link[0:depth], {}
                               ).setdefault(k, Counter()
                               ).update(self._data[link][k])
-        l = sorted(grouped.iterkeys(), key=itemgetter(*range(0, depth)))
-        return OrderedDict((k, grouped[k]) for k in l)
+        if depth > 0:
+            l = sorted(grouped.iterkeys(), key=itemgetter(*range(0, depth)))
+            return OrderedDict((k, grouped[k]) for k in l)
+        return grouped
 
     def most_common(self, n=None, depth=4):
         """
@@ -633,19 +627,19 @@ if __name__ == '__main__':
     d[('1.1.1.1', '2.2.2.2', 'TCP', '5060')]['->'].update(
         ('REGISTER' for x in xrange(random.randrange(0, 1000))))
     d[('1.1.1.1', '2.2.2.2', 'TCP', '5062')]['->'].update(
-        ('INVITE' for x in xrange(random.randrange(0, 1000))))
+        ('REFER' for x in xrange(random.randrange(0, 1000))))
     d[('1.1.1.1', '2.2.2.2', 'TCP', '5060')]['<-'].update(
         ('100' for x in xrange(random.randrange(0, 1000))))
     d[('1.1.1.1', '2.2.2.2', 'TCP', '5062')]['<-'].update(
-        ('200' for x in xrange(random.randrange(0, 1000))))
+        ('202' for x in xrange(random.randrange(0, 1000))))
     d[('1.1.1.1', '3.3.3.3', 'TCP', '5060')]['<-'].update(
         ('REFER' for x in xrange(random.randrange(0, 1000))))
     d[('1.1.1.1', '3.3.3.3', 'TCP', '5060')]['->'].update(
         ('202' for x in xrange(random.randrange(0, 1000))))
-    d[('1.1.1.1', '3.3.3.3', 'UDP', '5060')]['<-'].update(
-        ('NOTIFY' for x in xrange(random.randrange(0, 1000))))
     d[('1.1.1.1', '3.3.3.3', 'UDP', '5060')]['->'].update(
+        ('INVITE' for x in xrange(random.randrange(0, 1000))))
+    d[('1.1.1.1', '3.3.3.3', 'UDP', '5060')]['<-'].update(
         ('200' for x in xrange(random.randrange(0, 1000))))
     sipcounter = SIPCounter(data=d, name='Switch-A')
-    print sipcounter.pprint()
+    print sipcounter.pprint(depth=2)
     print sipcounter.pprint(data=sipcounter.most_common(n=2, depth=2), header=False, summary=False)
