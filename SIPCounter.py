@@ -101,12 +101,12 @@ class SIPCounter(object):
                     or 'update' methods. The internal SIP data store of this
                     class instance is as follows:
 
-                    {('server ip', 'client ip', 'protocol', 'service port') :
+                    {('server ip', 'client ip', 'protocol', 'service port', 'client port') :
                       {'msgdir' : collections.Counter()}, ....}
 
                     For example to initialize an instance with some data:
 
-                    data={('1.1.1.1', '2.2.2.2', 'tcp', '5060'):
+                    data={('1.1.1.1', '2.2.2.2', 'tcp', '5060', '34556'):
                     {'<-': Counter({'INVITE': 1}), '->': Counter({'200': 1})}}
 
         name:       this is used for housekeeping purposes, for example it can
@@ -143,7 +143,9 @@ class SIPCounter(object):
 
     @property
     def total(self):
-        return sum(z for x in d.values() for y in x.values() for z in y.values())
+        return sum(z for x in self._data.values()
+                     for y in x.values()
+                     for z in y.values())
 
     def add(self, sipmsg, msgdir=None, *args):
         """
@@ -172,10 +174,11 @@ class SIPCounter(object):
                       will be places into the internal dictionary - as a key -
                       as follows:
 
-                      ('1.1.1.1', '2.2.2.2', 'tcp', '5060')
+                      ('1.1.1.1', '2.2.2.2', 'tcp', '5060', '34556')
 
                       Any further messages between these two entities using TCP
-                      and service port 5060 will be counted under this key.
+                      and service port 5060 and client port 34556 will be
+                      counted under this key.
         :return: None
         """
         if args:
@@ -270,7 +273,7 @@ class SIPCounter(object):
 
                          For example:
 
-                         {('1.1.1.1', '2.2.2.2', 'tcp', '5060'):
+                         {('1.1.1.1', '2.2.2.2', 'tcp', '5060', '34556'):
                          {'<-': Counter({'UPDATE': 1, 'ReINVITE': 1}),
                          '->': Counter({'200': 1, '100': 1})}}
 
@@ -368,7 +371,7 @@ class SIPCounter(object):
         ...])
 
         :param depth: (int): indicating how deep into the key, which is a
-        tuple of potentially four strings, the method should look into when
+        tuple of potentially five strings, the method should look into when
         grouping the Counters together.
         :return: (OrderedDict): grouped and ordered by Server/Client/Protocol
         """
