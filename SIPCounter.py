@@ -1,8 +1,8 @@
 from collections import defaultdict, Counter, OrderedDict
-from operator import itemgetter
-from itertools import chain
-import re
 from copy import deepcopy
+from itertools import chain
+from operator import itemgetter
+import re
 
 class SIPCounter(object):
     """
@@ -149,8 +149,7 @@ class SIPCounter(object):
 
     def add(self, sipmsg, msgdir=None, *args):
         """
-        :param sipmsg: (string or list): SIP message either as a string or as
-                        a list of strings (header lines)
+        :param sipmsg: (string): SIP message as a string
         :param msgdir: (string of 'IN' or 'OUT'): determines the direction of
                         the message and the order in which the communicating
                         parties are placed into the internal dictionary as key,
@@ -226,6 +225,9 @@ class SIPCounter(object):
                     msgdir = self.dirIn
                 else:
                     msgdir = self.dirOut
+        else:
+            msgdir = self.dirBoth
+        if args:    
             # Determining server/client side
             if msgdir == self.dirIn:
                 link = [dstip, srcip]
@@ -245,16 +247,17 @@ class SIPCounter(object):
                 service_port = srcport
                 client_port = dstport
             # Determining protocol
-            if not proto:
-                m = self.reVia.search(d)
+            if proto:
+                proto = proto[0]
+            else:
+                m = self.reVia.search(sipmsg)
                 if m:
                     proto = m.group()[13:16]
                 else:
                     proto = 'udp'
             link.extend([proto.lower(), service_port, client_port])
         else:
-            msgdir = self.dirBoth
-            link = ('', '', '', '', '')
+            link = ['', '', '', '', '']
         if self.reSIPFilter.match(method) and self.reSIPFilter.match(msgtype):
             self._data.setdefault(tuple(link), {}
                      ).setdefault(msgdir, Counter()
@@ -375,7 +378,7 @@ class SIPCounter(object):
         grouping the Counters together.
         :return: (OrderedDict): grouped and ordered by Server/Client/Protocol
         """
-        depth = max(min(5, depth), 0)
+        depth = max(min(5, int(depth)), 0)
         if depth == 5:
             g = self._data
         else:
@@ -471,16 +474,22 @@ class SIPCounter(object):
             data = self.groupby(depth=depth)
         if summary:
             s = self.summary(data=data)
+            sl = len(''.join(next(s.iterkeys())))
         else:
             s = self.most_common(depth=depth)
+            sl = 0
+        if any(x for _,v in data.iteritems() 
+                 for x in v.iterkeys() if x == self.dirBoth):
+            directions = 1
+        else:
+            directions = 2
         m = s[next(s.iterkeys())]
         elements = self.elements(data=data)
         cl = max(len(str(x)) for v in m.values() for x in v.values())
         ml = max(len(x) for x in elements)
-        ll = max((len(''.join(x)) for x in data.iterkeys())) + depth
-        directions = len(set(y for x in s.values() for y in x.keys()))
+        ll = max((len(''.join(x)) for x in data.iterkeys())) + int(depth)
         column_width = int(round(max(ml, cl*directions)/2)*2) + 1
-        link_width = max(ll, len(self.name)) + 1
+        link_width = max(ll, len(self.name), sl) + 1
         if header:
             output.append('')
             columns = ' '.join(x.center(column_width) for x in elements)
@@ -517,10 +526,10 @@ class SIPCounter(object):
                                 ) if x)
                 for elem in elements:
                     if directions > 1:
-                        c.append(str(d[k][self.dirOut][elem]))
-                        c.append(str(d[k][self.dirIn][elem]))
+                        c.append(str(d[k].get(self.dirOut, {}).get(elem, 0)))
+                        c.append(str(d[k].get(self.dirIn, {}).get(elem, 0)))
                     else:
-                        c.append(str(d[k][self.dirBoth][elem]))
+                        c.append(str(d[k].get(self.dirBoth, {}).get(elem, 0)))
                 output.append(
                     ''.join((
                         link.ljust(link_width),
