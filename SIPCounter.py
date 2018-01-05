@@ -1,5 +1,6 @@
 from collections import defaultdict, Counter, OrderedDict
 from operator import itemgetter
+from itertools import chain
 import re
 from copy import deepcopy
 
@@ -131,12 +132,18 @@ class SIPCounter(object):
         self.name = kwargs.get('name', '')
         self.dirIn = '<-'
         self.dirOut = '->'
+        self.dirBoth = '<>'
         self.reReINVITE = re.compile(r'(To:|t:) .*(tag=)', re.MULTILINE)
         self.reCSeq = re.compile(r'(CSeq: .*)', re.MULTILINE)
         self.reVia = re.compile(r'(Via:|v:) .*', re.MULTILINE)
+
     @property
     def data(self):
         return self._data
+
+    @property
+    def total(self):
+        return sum(z for x in d.values() for y in x.values() for z in y.values())
 
     def add(self, sipmsg, msgdir=None, *args):
         """
@@ -221,47 +228,34 @@ class SIPCounter(object):
                 link = [dstip, srcip]
             else:
                 link = [srcip, dstip]
+            # Determining server/client ports
             if srcport in self.known_ports:
                 service_port = srcport
+                client_port = dstport
             elif dstport in self.known_ports:
                 service_port = dstport
+                client_port = srcport
             elif int(srcport) > int(dstport):
                 service_port = dstport
+                client_port = srcport
             else:
                 service_port = srcport
+                client_port = dstport
             # Determining protocol
             if not proto:
-                try:
-                    headerVia = next(x for x in sipmsg if x.startswith('Via:')
-                                                       or x.startswith('v:'))
-                    proto = headerVia[13:16]
-                except:
+                m = self.reVia.search(d)
+                if m:
+                    proto = m.group()[13:16]
+                else:
                     proto = 'udp'
-            link.append(proto.lower())
-            link.append(service_port)
+            link.extend([proto.lower(), service_port, client_port])
         else:
-            msgdir = '<->'
-            link = ('', '', '', '')
+            msgdir = self.dirBoth
+            link = ('', '', '', '', '')
         if self.reSIPFilter.match(method) and self.reSIPFilter.match(msgtype):
             self._data.setdefault(tuple(link), {}
                      ).setdefault(msgdir, Counter()
                      ).update([msgtype])
-
-    def subtract(self, iterable):
-        """
-        Convenience method which serves to modify the internal Counters
-        to decrease their values. It uses the 'update' method.
-        It is very unlikely to be used often directly.
-        :param iterable: (dict): of the same type as the internal self._data
-                         it is primary purpose is to allow access to the
-                         internal collections.Counters in order to decrease
-                         their values.
-        :return: None
-        """
-        if isinstance(iterable, dict):
-            self.update(iterable, subtract=True)
-        else:
-            raise TypeError('can only invoke with SIPCounter type dictionaries')
 
     def update(self, iterable, subtract=False):
         """
@@ -287,7 +281,7 @@ class SIPCounter(object):
         if isinstance(iterable, dict):
             for k, v in iterable.iteritems():
                 for k2, v2 in v.iteritems():
-                    if subtract == False:
+                    if not subtract:
                         self._data.setdefault(k, {}
                                  ).setdefault(k2, Counter()
                                  ).update(v2)
@@ -321,65 +315,77 @@ class SIPCounter(object):
     def keys(self):
         """
         Provides the list of internal storage keys (aka links) sorted
-                 by Server/Proxy IP, then Client IP, then protocol
+                 by Server/Proxy IP, then Client IP, then protocol,
+                 followed by Server side port then Client side port
         :return: (list)
         """
-        return sorted(self._data.iterkeys(), key=itemgetter(0, 1, 2))
+        return sorted(self._data.iterkeys(), key=itemgetter(0, 1, 2, 3))
 
     def groupby(self, depth=4):
         """
         Has two purposes. One is to group (or add) together the Counters
         of links depending on how deep the caller would like to look into
-        the self._data storage. For example there are three separate links
-        in the self._data as follows:
+        the self._data storage. The other is to order the grouped
+        dictionary. For example there are five separate links in the
+        self._data as follows:
 
-        {('1.1.1.1', '2.2.2.2', 'tcp', '5060'):  {'<-': Counter({'UPDATE': 1})},
-         ('1.1.1.1', '3.3.3.3', 'tcp', '5060'):  {'<-': Counter({'UPDATE': 1})},
-         ('1.1.1.1', '2.2.2.2', 'tcp', '5062'):  {'<-': Counter({'UPDATE': 1})},
-         ('1.1.1.1', '2.2.2.2', 'tls', '5061'):  {'<-': Counter({'UPDATE': 1})}}
+        {('1.1.1.1', '2.2.2.2', 'tcp', '5060', '33332'):  {'<-': Counter({'UPDATE': 1})},
+         ('1.1.1.1', '2.2.2.2', 'tcp', '5060', '33333'):  {'<-': Counter({'UPDATE': 1})},
+         ('1.1.1.1', '3.3.3.3', 'tcp', '5060', '33334'):  {'<-': Counter({'UPDATE': 1})},
+         ('1.1.1.1', '2.2.2.2', 'tcp', '5062', '33335'):  {'<-': Counter({'UPDATE': 1})},
+         ('1.1.1.1', '2.2.2.2', 'tls', '5061', '33336'):  {'<-': Counter({'UPDATE': 1})}}
 
-        Calling groupby(depth=4) would only return an OrderedDict placing the
+        Calling groupby(depth=5) would only return an OrderedDict placing the
         Counters between '1.1.1.1' and '2.2.2.2' first before that of '1.1.1.1'
         with '3.3.3.3'.
-        Calling groupby(depth=3) would not only order the links but also merge
-        the Counters of '1.1.1.1' and '2.2.2.2' over 'tcp' regardless of
-        of the port used.
+        Calling groupby(depth=4) would not only order the links but also merge
+        the Counters of '1.1.1.1' and '2.2.2.2' over 'tcp', port '5060'
+        regardless of the client side port used.
 
         OrderedDict([.....
-        ('1.1.1.1', '2.2.2.2', 'tcp'), {'<-': Counter({'UPDATE': 2})}),
+        ('1.1.1.1', '2.2.2.2', 'tcp', '5060'):  {'<-': Counter({'UPDATE': 2})},
+        ('1.1.1.1', '2.2.2.2', 'tcp', '5062'):  {'<-': Counter({'UPDATE': 1})},
+        ('1.1.1.1', '2.2.2.2', 'tls', '5061'):  {'<-': Counter({'UPDATE': 1})},
+        ('1.1.1.1', '3.3.3.3', 'tcp', '5060'):  {'<-': Counter({'UPDATE': 1})},
+        ...])
+
+        Calling groupby(depth=3) would order and merge the Counters of
+        '1.1.1.1' and '2.2.2.2' over 'tcp' regardless of the server
+        or client side port used.
+
+        OrderedDict([.....
+        ('1.1.1.1', '2.2.2.2', 'tcp'), {'<-': Counter({'UPDATE': 3})}),
         ('1.1.1.1', '2.2.2.2', 'tls'), {'<-': Counter({'UPDATE': 1})}),
         ('1.1.1.1', '3.3.3.3', 'tcp'), {'<-': Counter({'UPDATE': 1})}),
         ...])
 
         Calling groupby(depth=2) would merge even further the Counters in
-        addition to ordering them, to something like this:
+        addition to ordering them:
 
         OrderedDict([.....
-        ('1.1.1.1', '2.2.2.2'), {'<-': Counter({'UPDATE': 3})}),
+        ('1.1.1.1', '2.2.2.2'), {'<-': Counter({'UPDATE': 4})}),
         ('1.1.1.1', '3.3.3.3'), {'<-': Counter({'UPDATE': 1})}),
         ...])
-
-        The other purpose is to order the grouped dictionary.
 
         :param depth: (int): indicating how deep into the key, which is a
         tuple of potentially four strings, the method should look into when
         grouping the Counters together.
         :return: (OrderedDict): grouped and ordered by Server/Client/Protocol
         """
-        if depth == 4:
-            grouped = self._data
+        depth = max(min(5, depth), 0)
+        if depth == 5:
+            g = self._data
         else:
-            grouped = {}
+            g = {}
             for link in self.keys():
                 if set(link[0:depth]).issubset(link):
                     for k in self._data[link]:
-                        grouped.setdefault(link[0:depth], {}
-                              ).setdefault(k, Counter()
-                              ).update(self._data[link][k])
-        if depth > 0:
-            l = sorted(grouped.iterkeys(), key=itemgetter(*range(0, depth)))
-            return OrderedDict((k, grouped[k]) for k in l)
-        return grouped
+                        g.setdefault(link[0:depth], {}
+                        ).setdefault(k, Counter()
+                        ).update(self._data[link][k])
+        l = sorted(g.iterkeys(), key=depth and itemgetter(*range(0, depth))
+                                           or None)
+        return OrderedDict((k, g[k]) for k in l)
 
     def most_common(self, n=None, depth=4):
         """
@@ -393,30 +399,31 @@ class SIPCounter(object):
         grouping the Counters together.
         :return: (OrderedDict): grouped and ordered by Server/Client/Protocol
         """
-        grouped = self.groupby(depth=depth)
+        g = self.groupby(depth=depth)
         d = defaultdict(int)
-        for k,v in grouped.iteritems():
+        for k,v in g.iteritems():
             for _, counter in v.iteritems():
                 d[k] += sum(counter.values())
         most = sorted(d, key=d.get, reverse=True)
         if n is not None:
             most = most[0:n]
-        return OrderedDict([(x, grouped[x]) for x in most])
+        return OrderedDict([(x, g[x]) for x in most])
 
-    def summary(self, data=None):
+    def summary(self, data=None, title='SUMMARY'):
         """
         Calculates and returns a dictionary with the summary of all
         the Counters either seen in the internal self._data store or in
         a similar data store provided in optional 'data' argument.
         :param data: (dict): optional self._data store like dictionary
+        :param title: (string): optional name of the summary line
         :return: (dict): with the summary of all Counters
         """
         if data is None:
             data = self._data
-        d = {}
+        d = OrderedDict({(title,) : {}})
         for k,v in data.iteritems():
             for direction, counter in v.iteritems():
-                d.setdefault(direction, Counter()).update(counter)
+                d[(title,)].setdefault(direction, Counter()).update(counter)
         return d
 
     def elements(self, data=None):
@@ -428,9 +435,9 @@ class SIPCounter(object):
         """
         if data is None:
             data = self._data
-        s = set(x for sublist in self.summary(data).values() for x in sublist)
+        s = set(x for s in data.values() for y in s.values() for x in y)
         requests = sorted((x for x in s if not x.isdigit()),
-                    key=lambda x: self.SORT_ORDER.get(x, 17))
+                   key=lambda x: self.SORT_ORDER.get(x, len(self.SORT_ORDER)))
         responses = sorted((x for x in s if x.isdigit()))
         return requests + responses
 
@@ -461,15 +468,14 @@ class SIPCounter(object):
             data = self.groupby(depth=depth)
         if summary:
             s = self.summary(data=data)
-            cl = max(len(str(x)) for k,v in s.iteritems() for x in v.values())
         else:
             s = self.most_common(depth=depth)
-            s = s[s.keys()[0]]
-            cl = max(len(str(x)) for k, v in s.iteritems() for x in v.values())
+        m = s[next(s.iterkeys())]
         elements = self.elements(data=data)
-        directions = len(s.keys())
+        cl = max(len(str(x)) for v in m.values() for x in v.values())
         ml = max(len(x) for x in elements)
         ll = max((len(''.join(x)) for x in data.iterkeys())) + depth
+        directions = len(set(y for x in s.values() for y in x.keys()))
         column_width = int(round(max(ml, cl*directions)/2)*2) + 1
         link_width = max(ll, len(self.name)) + 1
         if header:
@@ -477,73 +483,61 @@ class SIPCounter(object):
             columns = ' '.join(x.center(column_width) for x in elements)
             output.append(self.name.ljust(link_width) + columns)
             if directions > 1:
-                output.append(
-                    ''.join((
-                        ''.ljust(link_width),
-                        len(elements) * (
-                            ' '.join((
-                            self.dirOut.rjust(column_width/directions, '-'),
-                            self.dirIn.ljust(column_width/directions, '-')))
-                            + ' ')
+                output.append(''.join((
+                    ''.ljust(link_width),
+                    len(elements) * (
+                        ' '.join((
+                        self.dirOut.rjust(column_width/directions, '-'),
+                        self.dirIn.ljust(column_width/directions, '-')))
+                        + ' ')
                             )))
             else:
-                output.append(
-                    ''.join((
-                        ''.ljust(link_width),
-                        len(elements) * (
-                            ''.join(('<',
-                                     '-'.center(column_width-2, '-'),
-                                     '>')) + ' '
-                                        )
-                            )))
+                output.append(''.join((
+                    ''.ljust(link_width),
+                    len(elements) * (
+                        ''.join(('-'.center(column_width, '-'))) + ' ')
+                             )))
+        l = []
         if links:
-            for k,v in data.iteritems():
+            l.append(data)
+        if summary:
+            l.append(s)
+        for d in chain(l):
+            for k,v in d.iteritems():
                 c = []
                 link = '-'.join(x for x in (
-                                    ''.join(k[0:1]),
-                                    ''.join(k[2:3]),
-                                    ''.join(k[3:4]),
-                                    ''.join(k[1:2]))
-                                        if x)
+                                ''.join(k[0:1]),
+                                ''.join(k[2:3]),
+                                ''.join(k[3:4]),
+                                ''.join(k[4:5]),
+                                ''.join(k[1:2]),
+                                ) if x)
                 for elem in elements:
                     if directions > 1:
-                        c.append(str(data[k][self.dirOut][elem]))
-                        c.append(str(data[k][self.dirIn][elem]))
+                        c.append(str(d[k][self.dirOut][elem]))
+                        c.append(str(d[k][self.dirIn][elem]))
                     else:
-                        c.append(str(data[k]['<->'][elem]))
+                        c.append(str(d[k][self.dirBoth][elem]))
                 output.append(
                     ''.join((
                         link.ljust(link_width),
                         ' '.join(x.rjust(column_width/directions) for x in c)
                             )))
-        if summary:
-            c = []
-            for elem in elements:
-                if directions > 1:
-                    c.append(str(s[self.dirOut][elem]))
-                    c.append(str(s[self.dirIn][elem]))
-                else:
-                    c.append(str(s['<->'][elem]))
-            output.append(
-                ''.join((
-                    'SUMMARY'.ljust(link_width),
-                    ' '.join(x.rjust(column_width/directions) for x in c)
-                        )))
         output.append('')
         return '\n'.join(output)
 
     def __contains__(self, elem):
         if '.' in elem:
             return any(elem in x for x in self._data)
-        return any(elem in x for x in self.summary())
+        return elem in self.elements()
 
     def __add__(self, other):
         if type(self) != type(other):
             raise TypeError('can only add SIPCounter to another SIPCounter')
-        sip_filter = self.sip_filter.union(other.sip_filter)
-        host_filter = self.host_filter.union(other.host_filter)
-        known_servers = self.known_servers.union(other.known_servers)
-        known_ports = self.known_ports.union(other.known_ports)
+        sip_filter = self.sip_filter | other.sip_filter
+        host_filter = self.host_filter | other.host_filter
+        known_servers = self.known_servers | other.known_servers
+        known_ports = self.known_ports | other.known_ports
         name = ' '.join((self.name, other.name))
         dup = deepcopy(self._data)
         self.update(other.data)
@@ -578,11 +572,11 @@ class SIPCounter(object):
     def __iadd__(self, other):
         if type(self) != type(other):
             raise TypeError('can only add to SIPCounter another SIPCounter')
-        self.sip_filter = self.sip_filter.union(other.sip_filter)
+        self.sip_filter = self.sip_filter | other.sip_filter
         self.reSIPFilter = re.compile(r'(%s)' % '|'.join(self.sip_filter))
-        self.host_filter = self.host_filter.union(other.host_filter)
-        self.known_servers = self.known_servers.union(other.known_servers)
-        self.known_ports = self.known_ports.union(other.known_ports)
+        self.host_filter = self.host_filter | other.host_filter
+        self.known_servers = self.known_servers | other.known_servers
+        self.known_ports = self.known_ports | other.known_ports
         self.name = ' '.join((self.name, other.name))
         self.update(other.data)
 
@@ -597,8 +591,26 @@ class SIPCounter(object):
         self.name = ' '.join(x for x in self.name.split() if x != other.name)
         self.update(other, subtract=True)
 
+    def __lt__(self, other):
+        return self.total < other.total
+
+    def __gt__(self, other):
+        return self.total > other.total
+
+    def __ge__(self, other):
+        return self.total >= other.total
+
+    def __le__(self, other):
+        return self.total <= other.total
+
+    def __eq__(self, other):
+        return self.total == other.total
+
+    def __ne__(self, other):
+        return self.total != other.total
+
     def __repr__(self):
-        s = 'SIPCounter(name=%s, sip_filter=%s, host_filter=%s, known_servers=%s, known_ports=%s, data=%s)'
+        s = "SIPCounter(name='%s', sip_filter=%s, host_filter=%s, known_servers=%s, known_ports=%s, data=%s)"
         return s % (self.name,
                     self.sip_filter,
                     self.host_filter,
@@ -611,35 +623,50 @@ class SIPCounter(object):
 
 if __name__ == '__main__':
     import random
-    d = {('1.1.1.1', '2.2.2.2', 'TLS', '5061'): {'->': Counter(), '<-': Counter()},
-         ('1.1.1.1', '2.2.2.2', 'TCP', '5060'): {'->': Counter(), '<-': Counter()},
-         ('1.1.1.1', '2.2.2.2', 'TCP', '5062'): {'->': Counter(), '<-': Counter()},
-         ('1.1.1.1', '3.3.3.3', 'TCP', '5060'): {'->': Counter(), '<-': Counter()},
-         ('1.1.1.1', '3.3.3.3', 'UDP', '5060'): {'->': Counter(), '<-': Counter()}}
-    d[('1.1.1.1', '2.2.2.2', 'TLS', '5061')]['->'].update(
+    d = {('1.1.1.1', '2.2.2.2', 'TLS', '5061', '33332'): {'->': Counter(), '<-': Counter()},
+         ('1.1.1.1', '2.2.2.2', 'TLS', '5061', '33333'): {'->': Counter(), '<-': Counter()},
+         ('1.1.1.1', '2.2.2.2', 'TCP', '5060', '33334'): {'->': Counter(), '<-': Counter()},
+         ('1.1.1.1', '2.2.2.2', 'TCP', '5062', '33335'): {'->': Counter(), '<-': Counter()},
+         ('1.1.1.1', '3.3.3.3', 'TCP', '5060', '33336'): {'->': Counter(), '<-': Counter()},
+         ('1.1.1.1', '3.3.3.3', 'UDP', '5060', '33337'): {'->': Counter(), '<-': Counter()}}
+    d[('1.1.1.1', '2.2.2.2', 'TLS', '5061', '33332')]['->'].update(
         ('REGISTER' for x in xrange(random.randrange(0, 1000))))
-    d[('1.1.1.1', '2.2.2.2', 'TLS', '5061')]['->'].update(
-        ('INVITE' for x in xrange(random.randrange(0, 1000))))
-    d[('1.1.1.1', '2.2.2.2', 'TLS', '5061')]['<-'].update(
-        ('100' for x in xrange(random.randrange(0, 1000))))
-    d[('1.1.1.1', '2.2.2.2', 'TLS', '5061')]['<-'].update(
+    d[('1.1.1.1', '2.2.2.2', 'TLS', '5061', '33333')]['->'].update(
+        ('INVITE' for x in xrange(random.randrange(0, 2000))))
+    d[('1.1.1.1', '2.2.2.2', 'TLS', '5061', '33332')]['<-'].update(
+        ('100' for x in xrange(random.randrange(0, 2000))))
+    d[('1.1.1.1', '2.2.2.2', 'TLS', '5061', '33333')]['<-'].update(
         ('200' for x in xrange(random.randrange(0, 1000))))
-    d[('1.1.1.1', '2.2.2.2', 'TCP', '5060')]['->'].update(
+    d[('1.1.1.1', '2.2.2.2', 'TCP', '5060', '33334')]['->'].update(
         ('REGISTER' for x in xrange(random.randrange(0, 1000))))
-    d[('1.1.1.1', '2.2.2.2', 'TCP', '5062')]['->'].update(
+    d[('1.1.1.1', '2.2.2.2', 'TCP', '5062', '33335')]['->'].update(
         ('REFER' for x in xrange(random.randrange(0, 1000))))
-    d[('1.1.1.1', '2.2.2.2', 'TCP', '5060')]['<-'].update(
+    d[('1.1.1.1', '2.2.2.2', 'TCP', '5060', '33334')]['<-'].update(
         ('100' for x in xrange(random.randrange(0, 1000))))
-    d[('1.1.1.1', '2.2.2.2', 'TCP', '5062')]['<-'].update(
+    d[('1.1.1.1', '2.2.2.2', 'TCP', '5062', '33335')]['<-'].update(
         ('202' for x in xrange(random.randrange(0, 1000))))
-    d[('1.1.1.1', '3.3.3.3', 'TCP', '5060')]['<-'].update(
+    d[('1.1.1.1', '3.3.3.3', 'TCP', '5060', '33336')]['<-'].update(
         ('REFER' for x in xrange(random.randrange(0, 1000))))
-    d[('1.1.1.1', '3.3.3.3', 'TCP', '5060')]['->'].update(
+    d[('1.1.1.1', '3.3.3.3', 'TCP', '5060', '33336')]['->'].update(
         ('202' for x in xrange(random.randrange(0, 1000))))
-    d[('1.1.1.1', '3.3.3.3', 'UDP', '5060')]['->'].update(
+    d[('1.1.1.1', '3.3.3.3', 'UDP', '5060', '33337')]['->'].update(
         ('INVITE' for x in xrange(random.randrange(0, 1000))))
-    d[('1.1.1.1', '3.3.3.3', 'UDP', '5060')]['<-'].update(
+    d[('1.1.1.1', '3.3.3.3', 'UDP', '5060', '33337')]['<-'].update(
         ('200' for x in xrange(random.randrange(0, 1000))))
+    d2 = {('', '', '', '',): {'<>': Counter()}}
+    d2[('', '', '', '')]['<>'].update(
+        ('INVITE' for x in xrange(random.randrange(0, 2000))))
+    d2[('', '', '', '')]['<>'].update(
+        ('PUBLISH' for x in xrange(random.randrange(0, 2000))))
+    d2[('', '', '', '')]['<>'].update(
+        ('CANCEL' for x in xrange(random.randrange(0, 10))))
+    d2[('', '', '', '')]['<>'].update(
+        ('100' for x in xrange(random.randrange(0, 2000))))
+    d2[('', '', '', '')]['<>'].update(
+        ('200' for x in xrange(random.randrange(0, 20000))))
+    d2[('', '', '', '')]['<>'].update(
+        ('180' for x in xrange(random.randrange(0, 2000))))
     sipcounter = SIPCounter(data=d, name='Switch-A')
-    print sipcounter.pprint(depth=2)
-    print sipcounter.pprint(data=sipcounter.most_common(n=2, depth=2), header=False, summary=False)
+    sipcounter2 = SIPCounter(data=d2, name='Switch-B')
+    print sipcounter.pprint(depth=4, summary=True, header=True)
+    print sipcounter2.pprint(summary=True)
