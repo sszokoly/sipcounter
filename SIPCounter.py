@@ -669,4 +669,4 @@ if __name__ == '__main__':
     sipcounter = SIPCounter(data=d, name='Switch-A')
     sipcounter2 = SIPCounter(data=d2, name='Switch-B')
     print sipcounter.pprint(depth=4, summary=True, header=True)
-    print sipcounter2.pprint(summary=True)
+    print sipcounter2.pprint(summary=False)
