@@ -6,22 +6,34 @@ import re
 
 class SIPCounter(object):
     """
-    This class provides a SIP Counter. It can be used to track the number of
-    SIP requests and corresponding responses. It is not meant to be a stateful
-    call status tracking tool. It merely counts the messages sent/received.
-    It's primary use would be to monitor links for certain type of events, for
-    example an occurrences of certain SIP errors or provides basic statistics.
-    For instance using the convenience pprint method you can visualize the type
-    and number of SIP messages you are interested in.
+    Simple SIP request/response message counter implementation with optional
+    direction and source/destination/protocol/port indication. It is meant to
+    be used to track the number SIP message types per link. A link comprises
+    of the source/destination host IP address, the transport protocol type
+    (TLS, TCP, UDP) and the ports. It's primary use could be to collect basic
+    per link or total SIP statistics or to monitor the occurrences of certain
+    types of SIP errors. For instance one may wish to monitor only the INVITE
+    (and ReINVITE which are distinguished from initial INVITE) messages and
+    any corresponding error responses. The result may be printed out using the
+    'pprint' method before clearing the counters and starting all over again.
 
-        IPCounter               INVITE    NOTIFY    REFER    REGISTER    100       200       202
-                              ---> <--- ---> <--- ---> <--- ---> <--- ---> <--- ---> <--- ---> <---
-    1.1.1.1-TCP-5060-2.2.2.2     0    0    0    0    0    0  641    0    0  795    0    0    0    0
-    1.1.1.1-TCP-5062-2.2.2.2   934    0    0    0    0    0    0    0    0    0    0  670    0    0
-    1.1.1.1-TLS-5061-2.2.2.2   838    0    0    0    0    0  132    0    0  582    0   11    0    0
-    1.1.1.1-TCP-5060-3.3.3.3     0    0    0    0    0  122    0    0    0    0    0    0  378    0
-    1.1.1.1-UDP-5060-3.3.3.3     0    0    0  415    0    0    0    0    0    0  799    0    0    0
-    SUMMARY                   1772    0    0  415    0  122  773    0    0 1377  799  681  378    0
+    A simple use of this class would be as follows:
+
+    sipcounter = SIPCounter(name='SBCE Cone-A',
+                            sip_filter=set(['INVITE','ReINVITE','4','5','6']),
+                            known_servers=set(['1.1.1.1']))
+    while 1:
+        try:
+            tstamp, sipmsg, msgdir, srcip, srcport, dstip, dstport = sip.next()
+            sipcounter.add(sipmsg, msgdir, srcip, srcport, dstip, dstport)
+        except:
+            print sipcounter.pprint(title='2018-0101 01:01:00')
+
+    2018-0101 01:01:00          INVITE   ReINVITE    500       503       600
+    SBCE Cone-A               ---> <--- ---> <--- ---> <--- ---> <--- ---> <---
+    1.1.1.1-tcp-5060-2.2.2.1    13   10   40   40    1    0    0    0    0    0
+    1.1.1.1-tls-5061-2.2.2.1    13   10   36   42    0    0    1    0    1    0
+    SUMMARY                     26   20   76   82    1    0    1    0    1    0
 
     """
     SORT_ORDER = {
@@ -46,63 +58,66 @@ class SIPCounter(object):
     def __init__(self, **kwargs):
         """
         Initializes a SIPCounter instance with optional keyword arguments.
+        The following keyword argument are available:
 
-        sip_filter: serves as a SIP message capture filter, out of which is
-                    built a regex object which is used to match certain or all
-                    request methods and corresponding responses.
-                    If not provided the default '.*' is used which will match
-                    all requests and responses.
-                    For example to count only INVITE and ReINVITE messages
-                    and any error response of these requests one should pass
-                    a set as follows:
+        sip_filter: serves as a SIP message count filter, out of which is
+                    built a regex object which is used to match the request
+                    methods of interest and the corresponding responses.
+                    If not provided a default '.*' pattern is used which will
+                    match all requests and responses. For example to count
+                    only INVITE and ReINVITE messages and any error responses
+                    for these requests one should pass the following set:
 
                     sip_filter=set(['INVITE', 'ReINVITE', '4', '5', '6'])
 
-                    It is also possible to define more specifically the error,
-                    for example:
+                    It is also possible to define more specifically the errors.
+                    For example to pass this keyword argument:
 
-                    sip_filter=set(['INVITE', 'ReINVITE', '408, '487', '5', '6'])
+                    sip_filter=set(['INVITE', 'ReINVITE', '408', '5', '6'])
 
-        host_filter: serves as a host capture filter, if the source and/or
-                    destination IP address of the SIP message is provided it
-                    will be counted only of either the origin (srcip) ir the
+        host_filter: serves as a host capture filter, if the source and
+                    destination IP address is provided the SIP message will
+                    only be counted if either the origin (srcip) or the
                     recipient (dstip) of the SIP message is in this set.
-                    For example to pass this argument:
+                    For example to pass this keyword argument:
 
                     host_filter=set(['1.1.1.1', '2.2.2.2', '3.3.3.3'])
 
         known_servers: this serves as a helper to the logic which determines
                     which of the two communicating parties may be the SIP
-                    Server/Proxy and the Client. If the internal logic fails
+                    Server/Proxy and which the Client. The internal logic of
+                    this class tries to guess the Server (or Local) and the
+                    Client (or Remote) side of the SIP message if the consumer
+                    of this class provides the srcip, srcport, dstip, dstport
+                    arguments to the 'add' method. If the internal logic fails
                     to determine correctly the role of the communicating
-                    parties then the link summary may end up showing the
-                    parties in the wrong order and/or with wrong services port.
+                    parties then the data may end up being incorrect or show up
+                    incorrectly, in wrong order or with wrong services port.
                     If so it could help to specify the IP addresses of the
-                    SIP application servers/proxies/session border controllers.
-                    For example:
+                    known servers/proxies/session border controllers.
+                    For example to pass this keyword argument:
 
                     known_servers=set(['1.1.1.2', '1.1.1.1'])
 
-
-        known_ports: this is yet another helper to the logic which determines
-                    which of the two communicating parties may be the SIP
-                    Server/Proxy and the Client. If not well-known SIP
-                    ports are used (other than '5060' and '5061') then it
-                    may be a good idea to pass those none default ports
-                    in this argument so that the report will come out nicely.
-                    For example if the SIP service is running on port
-                    5070 and 5080 use strings instead of integers:
+        known_ports: this is yet another helper set to the internal logic to
+                    help determine which of the two communicating parties may
+                    be the Server (or Local) side and which the Client
+                    (or Remote) side. This may only be required if not the
+                    well-known SIP ports (5060,5061) are used. For example if
+                    the SIP service is running on port 5070 and 5080 use the
+                    following argument: (strings instead of integers!)
 
                     known_ports=set(['5070', '5080'])
 
         data:       In rare situations there may be a need to initialize this
-                    object with some data prior to adding the first SIP
-                    message to the internal 'self._data' using the 'add'
-                    or 'update' methods. The internal SIP data store of this
-                    class instance is as follows:
+                    object with some data prior to incrementing the counters
+                    using the 'add' or 'update' methods.The internal self._data
+                    storeage format is as follows:
 
-                    {('server ip', 'client ip', 'protocol', 'service port', 'client port') :
-                      {'msgdir' : collections.Counter()}, ....}
+                    {('<server ip>', '<client ip>', '<protocol>',
+                      '<service port>', '<client port>') : {'msgdir' : Counter(
+                      {'<sip message type>' : int, '<sip message type>' : int, ...})
+                      }, ...}
 
                     For example to initialize an instance with some data:
 
@@ -110,9 +125,8 @@ class SIPCounter(object):
                     {'<-': Counter({'INVITE': 1}), '->': Counter({'200': 1})}}
 
         name:       this is used for housekeeping purposes, for example it can
-                    store the name of the system where these messages are
-                    captured or the date/timestamp since it is collecting data.
-
+                    store the name of the system where the SIP messages are
+                    captured or the timestamp of when the instance was created.
 
         :param kwargs: sip_filter (set): SIP message capture filter
                        host_filter (set): SIP host capture filter
@@ -143,6 +157,10 @@ class SIPCounter(object):
 
     @property
     def total(self):
+        """
+        This sums up all the Counter() objects found in self._data.
+        :return: int
+        """
         return sum(z for x in self._data.values()
                      for y in x.values()
                      for z in y.values())
@@ -447,7 +465,8 @@ class SIPCounter(object):
         responses = sorted((x for x in s if x.isdigit()))
         return requests + responses
 
-    def pprint(self, links=True, summary=True, depth=4, header=True, data=None):
+    def pprint(self, depth=4, title='', header=True, links=True, summary=True,
+                     data=None):
         """
         Convenience method to provide a basic readable output of the internal
         self._data store. The representation of the self._data is subjective,
@@ -455,12 +474,14 @@ class SIPCounter(object):
         a full fledged pretty print method. Consumers are encouraged to write
         their own functions to present the content of the internal data
         store the way that best suits their needs.
-        :param links: (bool): if the link lines are to be printed
-        :param summary: (bool): if summary line is to be printed in the end
         :param depth: (int): indicating how deep into the key, which is a
         tuple of potentially four strings, the method should look into when
         grouping the Counters together.
+        :param title: (string): optional information to print inline with top
+                      line, for example a timestamp
         :param header: (bool): if the header is to be printed
+        :param links: (bool): if the link lines are to be printed
+        :param summary: (bool): if summary line is to be printed in the end
         :param data: optional self._data store like dictionary, this may be
                      used more often. For example to pprint the busiest
                      5 links one can use this as follows:
@@ -489,14 +510,14 @@ class SIPCounter(object):
         ml = max(len(x) for x in elements)
         ll = max((len(''.join(x)) for x in data.iterkeys())) + int(depth)
         column_width = int(round(max(ml, cl*directions)/2)*2) + 1
-        link_width = max(ll, len(self.name), sl) + 1
+        link_width = max(ll, len(self.name), sl, len(title)) + 1
         if header:
             output.append('')
             columns = ' '.join(x.center(column_width) for x in elements)
-            output.append(self.name.ljust(link_width) + columns)
+            output.append(title.ljust(link_width) + columns)
             if directions > 1:
                 output.append(''.join((
-                    ''.ljust(link_width),
+                    self.name.ljust(link_width),
                     len(elements) * (
                         ' '.join((
                         self.dirOut.rjust(column_width/directions, '-'),
@@ -505,7 +526,7 @@ class SIPCounter(object):
                             )))
             else:
                 output.append(''.join((
-                    ''.ljust(link_width),
+                    self.name.ljust(link_width),
                     len(elements) * (
                         ''.join(('-'.center(column_width, '-'))) + ' ')
                              )))
@@ -665,20 +686,20 @@ if __name__ == '__main__':
         ('INVITE' for x in xrange(random.randrange(0, 1000))))
     d[('1.1.1.1', '3.3.3.3', 'UDP', '5060', '33337')]['<-'].update(
         ('200' for x in xrange(random.randrange(0, 1000))))
-    d2 = {('', '', '', '',): {'<>': Counter()}}
-    d2[('', '', '', '')]['<>'].update(
+    d2 = {('', '', '', '', ''): {'<>': Counter()}}
+    d2[('', '', '', '', '')]['<>'].update(
         ('INVITE' for x in xrange(random.randrange(0, 2000))))
-    d2[('', '', '', '')]['<>'].update(
+    d2[('', '', '', '', '')]['<>'].update(
         ('PUBLISH' for x in xrange(random.randrange(0, 2000))))
-    d2[('', '', '', '')]['<>'].update(
+    d2[('', '', '', '', '')]['<>'].update(
         ('CANCEL' for x in xrange(random.randrange(0, 10))))
-    d2[('', '', '', '')]['<>'].update(
+    d2[('', '', '', '', '')]['<>'].update(
         ('100' for x in xrange(random.randrange(0, 2000))))
-    d2[('', '', '', '')]['<>'].update(
+    d2[('', '', '', '', '')]['<>'].update(
         ('200' for x in xrange(random.randrange(0, 20000))))
-    d2[('', '', '', '')]['<>'].update(
+    d2[('', '', '', '', '')]['<>'].update(
         ('180' for x in xrange(random.randrange(0, 2000))))
     sipcounter = SIPCounter(data=d, name='Switch-A')
     sipcounter2 = SIPCounter(data=d2, name='Switch-B')
-    print sipcounter.pprint(depth=4, summary=True, header=True)
+    print sipcounter.pprint(depth=4, summary=True, header=True, title='2018-0106 16:00:00')
     print sipcounter2.pprint(summary=False)

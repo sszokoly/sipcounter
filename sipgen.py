@@ -4,8 +4,8 @@ import sys
 
 req = '%s sip\r\nCSeq: 1 %s\r\nVia: SIP/2.0/%s 1\r\nTo: 1;%s\r\n'
 resp = 'SIP/2.0 %s Bla\r\nCSeq: 1 %s\r\nVia: SIP/2.0/%s 1'
-requests = ['INVITE', 'BYE', 'CANCEL', 'UPDATE', 'REGISTER']
-responses = ['200', '401', '407', '500', '503', '600']
+requests = ['INVITE', 'ReINVITE']
+responses = ['500', '503', '600']
 tags = ['tag=1', '']
 servers = [('1.1.1.1', 'TLS', '5061'), ('1.1.1.1', 'TCP', '5060'), 
            ('1.1.1.2', 'TCP', '5060'), ('1.1.1.2', 'TCP', '5062'),
@@ -42,20 +42,20 @@ def response_generator():
 
 request = request_generator()
 response = response_generator()
-sipcounter = SIPCounter(name='TEST', 
+sipcounter = SIPCounter(name='SBCE Cone-A',
                         known_servers=set(['1.1.1.1', '1.1.1.2']), 
                         known_ports=set(['5062']),)
                         #sip_filter=set(['INVITE', '200']))
 
-for x in xrange(0,10000):
+for x in xrange(0,1000):
     sipmsg, srcip, srcport, dstip, dstport, proto = request.next()
     sipcounter.add(sipmsg, None, srcip, srcport, dstip, dstport, proto)
 
-for x in xrange(0,10000):
+for x in xrange(0,1000):
     sipmsg, srcip, srcport, dstip, dstport, proto = response.next()
     sipcounter.add(sipmsg, None, srcip, srcport, dstip, dstport, proto)
 
 if len(sys.argv) > 1:
-    print sipcounter.pprint(depth=int(sys.argv[1]))
+    print sipcounter.pprint(depth=int(sys.argv[1]), title='2018-0101 01:01:00')
 else:
-    print sipcounter.pprint()
+    print sipcounter.pprint(title='2018-0101 01:01:00')
