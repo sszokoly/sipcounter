@@ -139,8 +139,7 @@ class SIPCounter(object):
         self.sip_filter = kwargs.get('sip_filter', set(['.*']))
         self.host_filter = kwargs.get('host_filter', set())
         self.known_servers = kwargs.get('known_servers', set())
-        self.known_ports = kwargs.get('known_ports', set()).union(set(['5060',
-                                                                       '5061']))
+        self.known_ports = kwargs.get('known_ports', set())|(set(['5060','5061']))
         self.reSIPFilter = re.compile(r'(%s)' % '|'.join(self.sip_filter))
         self._data = kwargs.get('data', {})
         self.name = kwargs.get('name', '')
@@ -167,35 +166,38 @@ class SIPCounter(object):
 
     def add(self, sipmsg, msgdir=None, *args):
         """
-        :param sipmsg: (string): SIP message as a string
-        :param msgdir: (string of 'IN' or 'OUT'): determines the direction of
-                        the message and the order in which the communicating
-                        parties are placed into the internal dictionary as key,
-                        first is the Server/Proxy followed by the Client.
-        :param args: (tuple of strings): this tuple contains in the order
-                      depicted below the details of the communicating parties
-                      (aka link):
+        :param sipmsg: (string): the SIP message
+        :param msgdir: (string): determines the direction of
+                        the message and consequently the order in which the
+                        communicating parties are placed into the internal
+                        self._data dictionary as key. The direction can be
+                        either 'IN' or 'OUT'.
+        :param args:   (tuple of strings): this tuple contains the details of
+                        the communicating parties in the order depicted below.
 
-                      (srcip, srcport, dstip, dstport, [proto])
+                        (srcip, srcport, dstip, dstport, [proto])
 
-                      the proto is optional, if not provided it will be
-                      extracted from the top Via header.
+                        the proto(col) is optional, if not provided it will be
+                        extracted from the top Via header.
 
-                      For exaple both are valid for args:
+                        For exaple both are valid for args:
 
-                      ('1.1.1.1', '5060', '2.2.2.2', '34556', 'TCP')
-                      ('1.1.1.1', '5060', '2.2.2.2', '34556')
+                        ('1.1.1.1', '5060', '2.2.2.2', '34556', 'TCP')
+                        ('1.1.1.1', '5060', '2.2.2.2', '34556')
 
-                      Since the srcport is a well-known SIP service port
-                      and the other is not then by default the message above
-                      will be places into the internal dictionary - as a key -
-                      as follows:
+                        In the example above since the srcport is a well-known
+                        SIP service port and the other is not and the
+                        known_servers set also does not indicate neither IP
+                        address to be a server, nor the known_ports set
+                        dictates otherwise the message above will be counted
+                        towards the following link places into the internal
+                        self._data dictionary as a key:
 
-                      ('1.1.1.1', '2.2.2.2', 'tcp', '5060', '34556')
+                        ('1.1.1.1', '2.2.2.2', 'tcp', '5060', '34556')
 
-                      Any further messages between these two entities using TCP
-                      and service port 5060 and client port 34556 will be
-                      counted under this key.
+                        Any further messages between these two entities using
+                        TCP, service port 5060 and client port 34556 will be
+                        counted under this key.
         :return: None
         """
         if args:
@@ -203,7 +205,6 @@ class SIPCounter(object):
             if self.host_filter and (srcip not in self.host_filter and
                                      dstip not in self.host_filter):
                 return
-
         if sipmsg.startswith('SIP'):
             msgtype = sipmsg.split(' ', 2)[1]
         else:
