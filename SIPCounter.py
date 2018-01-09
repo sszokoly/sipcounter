@@ -146,6 +146,8 @@ class SIPCounter(object):
         self.dirIn = '<-'
         self.dirOut = '->'
         self.dirBoth = '<>'
+        self.local = 'local'
+        self.remote = 'remote'
         self.reReINVITE = re.compile(r'(To:|t:) .*(tag=)', re.MULTILINE)
         self.reCSeq = re.compile(r'(CSeq: .*)', re.MULTILINE)
         self.reVia = re.compile(r'(Via:|v:) .*', re.MULTILINE)
@@ -198,6 +200,7 @@ class SIPCounter(object):
                         Any further messages between these two entities using
                         TCP, service port 5060 and client port 34556 will be
                         counted under this key.
+
         :return: None
         """
         if args:
@@ -224,6 +227,8 @@ class SIPCounter(object):
                 msgdir = self.dirIn
             else:
                 msgdir = self.dirOut
+            link = [self.local, self.remote]
+            service_port, client_port = '', ''
         elif args:
             if self.known_servers:
                 if srcip in self.known_servers:
@@ -246,8 +251,8 @@ class SIPCounter(object):
                     msgdir = self.dirOut
         else:
             msgdir = self.dirBoth
-        if args:    
-            # Determining server/client side
+        # Determining server/client side
+        if args:
             if msgdir == self.dirIn:
                 link = [dstip, srcip]
             else:
@@ -265,18 +270,19 @@ class SIPCounter(object):
             else:
                 service_port = srcport
                 client_port = dstport
-            # Determining protocol
-            if proto:
-                proto = proto[0]
-            else:
-                m = self.reVia.search(sipmsg)
-                if m:
-                    proto = m.group()[13:16]
-                else:
-                    proto = 'udp'
-            link.extend([proto.lower(), service_port, client_port])
         else:
-            link = ['', '', '', '', '']
+            link = ['', '']
+            service_port, client_port = '', ''
+        # Determining protocol
+        if proto:
+            proto = proto[0]
+        else:
+            m = self.reVia.search(sipmsg)
+            if m:
+                proto = m.group()[13:16]
+            else:
+                proto = 'udp'
+        link.extend([proto.lower(), service_port, client_port])
         if self.reSIPFilter.match(method) and self.reSIPFilter.match(msgtype):
             self._data.setdefault(tuple(link), {}
                      ).setdefault(msgdir, Counter()
@@ -317,23 +323,24 @@ class SIPCounter(object):
 
     def clear(self):
         """
-        Clears the internal data store. This can be used when for example
-        a new sampling period begins and everything needs to be cleared.
+        Clears the internal self._data dictionary. This can be used when
+        for example a new sampling period begins and the counting needs
+        to start from zero.
         :return: None
         """
         self._data.clear()
 
     def iteritems(self):
         """
-        Returns the key,value pairs of the self._data storage.
-        :return: (generator)
+        Returns the key,value pairs of the self._data dictionary.
+        :return: (iterator)
         """
         return self._data.iteritems()
 
     def iterkeys(self):
         """
-        Returns the keys (aka links) of the self._data storage.
-        :return: (generator)
+        Returns the keys (aka links) of the self._data dictionary.
+        :return: (iterator)
         """
         return self._data.iterkeys()
 
@@ -341,17 +348,17 @@ class SIPCounter(object):
         """
         Provides the list of internal storage keys (aka links) sorted
                  by Server/Proxy IP, then Client IP, then protocol,
-                 followed by Server side port then Client side port
+                 followed by Server side port and finally Client side port.
         :return: (list)
         """
         return sorted(self._data.iterkeys(), key=itemgetter(0, 1, 2, 3))
 
     def groupby(self, depth=4):
         """
-        Has two purposes. One is to group (or add) together the Counters
-        of links depending on how deep the caller would like to look into
-        the self._data storage. The other is to order the grouped
-        dictionary. For example there are five separate links in the
+        This method has two purposes. One is to group (or add) together the
+        Counters of links depending on how deep the caller would like to look
+        into the self._data keys. The other is to order the grouped
+        dictionary elems. For example there are five separate links in the
         self._data as follows:
 
         {('1.1.1.1', '2.2.2.2', 'tcp', '5060', '33332'):  {'<-': Counter({'UPDATE': 1})},
@@ -362,10 +369,10 @@ class SIPCounter(object):
 
         Calling groupby(depth=5) would only return an OrderedDict placing the
         Counters between '1.1.1.1' and '2.2.2.2' first before that of '1.1.1.1'
-        with '3.3.3.3'.
+        with '3.3.3.3' but would not group any links and Counters together.
         Calling groupby(depth=4) would not only order the links but also merge
         the Counters of '1.1.1.1' and '2.2.2.2' over 'tcp', port '5060'
-        regardless of the client side port used.
+        igonoring the client side ports used ('33332' and '33333').
 
         OrderedDict([.....
         ('1.1.1.1', '2.2.2.2', 'tcp', '5060'):  {'<-': Counter({'UPDATE': 2})},
@@ -376,7 +383,7 @@ class SIPCounter(object):
 
         Calling groupby(depth=3) would order and merge the Counters of
         '1.1.1.1' and '2.2.2.2' over 'tcp' regardless of the server
-        or client side port used.
+        or client side ports used.
 
         OrderedDict([.....
         ('1.1.1.1', '2.2.2.2', 'tcp'), {'<-': Counter({'UPDATE': 3})}),
@@ -391,6 +398,8 @@ class SIPCounter(object):
         ('1.1.1.1', '2.2.2.2'), {'<-': Counter({'UPDATE': 4})}),
         ('1.1.1.1', '3.3.3.3'), {'<-': Counter({'UPDATE': 1})}),
         ...])
+
+        And so on.
 
         :param depth: (int): indicating how deep into the key, which is a
         tuple of potentially five strings, the method should look into when
@@ -408,19 +417,17 @@ class SIPCounter(object):
                         g.setdefault(link[0:depth], {}
                         ).setdefault(k, Counter()
                         ).update(self._data[link][k])
-        l = sorted(g.iterkeys(), key=depth and itemgetter(*range(0, depth))
-                                           or None)
+        l = sorted(g.iterkeys(), key=depth and itemgetter(*range(0, depth)) or None)
         return OrderedDict((k, g[k]) for k in l)
 
     def most_common(self, n=None, depth=4):
         """
-        Calculates the list of links with the highest total number of SIP
-        messages exchanged in descending order. Returns an OrderedDict
-        with the Counters of the n'th number of busiest links, optionally
-        grouped (merged) as well.
-        :param n: (int): how many of the most chatty links to return
+        Returns an OrderedDict of the n busiest links starting in descending
+        order. Optionally it groups (merged) links depending on how many
+        elements of the tuple as key is to be considered significant.
+        :param n: (int): how many of the busiest links to return
         :param depth: (int): indicating how deep into the key, which is a
-        tuple of potentially four strings, the method should look into when
+        tuple of potentially five strings, the method should look into when
         grouping the Counters together.
         :return: (OrderedDict): grouped and ordered by Server/Client/Protocol
         """
@@ -436,11 +443,11 @@ class SIPCounter(object):
 
     def summary(self, data=None, title='SUMMARY'):
         """
-        Calculates and returns a dictionary with the summary of all
-        the Counters either seen in the internal self._data store or in
-        a similar data store provided in optional 'data' argument.
+        Returns a dictionary with the summary of all Counters per SIP message
+        type captured in the self._data or in the optional self._data like
+        dictionary.
         :param data: (dict): optional self._data store like dictionary
-        :param title: (string): optional name of the summary line
+        :param title: (string): optional name of the returned dictionary.
         :return: (dict): with the summary of all Counters
         """
         if data is None:
@@ -453,9 +460,10 @@ class SIPCounter(object):
 
     def elements(self, data=None):
         """
-        Provides the list of SIP message types captured either in the internal
-        self._data store or in the optionally provided dictionary.
-        :param data: (dict): optional self._data store like dictionary
+        Returns a list of SIP message types captured since last clear in the
+        self._data internal storage or in the optionally provided self._data
+        like dictionary.
+        :param data: (dict): optional self._data like dictionary
         :return: (list): list of strings of all the SIP message types
         """
         if data is None:
