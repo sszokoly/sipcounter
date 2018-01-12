@@ -3,6 +3,7 @@ import time
 from subprocess import Popen, PIPE
 from SIPCounter import SIPCounter
 
+sipcounter = SIPCounter(name='Localhost')
 cmd = ['tshark', '-l', '-n', '-i', 'any',
        '-R', 'sip', '-E', 'separator=|', '-T', 'fields',
        '-e', 'ip.src', '-e', 'tcp.srcport',
@@ -10,7 +11,6 @@ cmd = ['tshark', '-l', '-n', '-i', 'any',
        '-e', 'sip.Request-Line', '-e', 'sip.Status-Line',
        '-e', 'sip.CSeq', '-e', 'sip.To']
 
-sipcounter = SIPCounter(name='Localhost')
 p = Popen(cmd, shell=False, stdout=PIPE, stderr=PIPE)
 while True:
     try:
