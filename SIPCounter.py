@@ -214,13 +214,13 @@ class SIPCounter(object):
             msgtype = sipmsg.split(' ', 1)[0]
             if msgtype == 'INVITE' and self.reReINVITE.search(sipmsg):
                 msgtype = 'ReINVITE'
-            m = self.reCSeq.search(sipmsg)
-            if m:
-                method = m.group().split()[2]
-            elif msgtype[0].isdigit():
-                method = 'UNKNOWN'
-            else:
-                method = msgtype
+        m = self.reCSeq.search(sipmsg)
+        if m:
+            method = m.group().split()[2]
+        elif msgtype[0].isdigit():
+            method = 'UNKNOWN'
+        else:
+            method = msgtype
         # Determining direction
         if msgdir is not None:
             if msgdir.upper() == 'IN':
