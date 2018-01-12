@@ -1,6 +1,5 @@
 from SIPCounter import SIPCounter
 import random
-import sys
 
 req = '%s sip\r\nCSeq: 1 %s\r\nVia: SIP/2.0/%s 1\r\nTo: 1;%s\r\n'
 resp = 'SIP/2.0 %s Bla\r\nCSeq: 1 %s\r\nVia: SIP/2.0/%s 1\r\n'
@@ -57,7 +56,6 @@ for x in xrange(0,9000):
     sipmsg, srcip, srcport, dstip, dstport, proto = response.next()
     sipcounter.add(sipmsg, None, srcip, srcport, dstip, dstport, proto)
 
-if len(sys.argv) > 1:
-    print sipcounter.pprint(title='2018-0101 01:01:00', depth=int(sys.argv[1]))
-else:
-    print sipcounter.pprint(title='2018-0101 01:01:00')
+print sipcounter.pprint(title='2018-0101 01:01:00')
+print sipcounter.pprint(title='2018-0101 01:01:00', depth=2)
+print sipcounter.pprint(title='Top 3', data=sipcounter.most_common(3, depth=2))
