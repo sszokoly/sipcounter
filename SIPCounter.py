@@ -712,5 +712,5 @@ if __name__ == '__main__':
         ('180' for x in xrange(random.randrange(0, 2000))))
     sipcounter = SIPCounter(data=d, name='Switch-A')
     sipcounter2 = SIPCounter(data=d2, name='Switch-B')
-    print sipcounter.pprint(depth=4, summary=True, header=True, title='2018-0106 16:00:00')
-    print sipcounter2.pprint(summary=False)
+    print(sipcounter.pprint(depth=4, summary=True, header=True, title='2018-0106 16:00:00'))
+    print(sipcounter2.pprint(summary=False))
