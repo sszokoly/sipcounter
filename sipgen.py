@@ -58,6 +58,6 @@ for x in xrange(0,1000):
     sipcounter.add(sipmsg, None, srcip, srcport, dstip, dstport, proto)
 
 if len(sys.argv) > 1:
-    print sipcounter.pprint(depth=int(sys.argv[1]), title='2018-0101 01:01:00')
+    print sipcounter.pprint(title='2018-0101 01:01:00', depth=int(sys.argv[1]))
 else:
     print sipcounter.pprint(title='2018-0101 01:01:00')
