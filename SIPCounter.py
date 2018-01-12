@@ -150,7 +150,7 @@ class SIPCounter(object):
         self.remote = 'remote'
         self.reReINVITE = re.compile(r'(To:|t:) .*(tag=)', re.MULTILINE)
         self.reCSeq = re.compile(r'(CSeq: .*)', re.MULTILINE)
-        self.reVia = re.compile(r'(Via:|v:) .*', re.MULTILINE)
+        self.reVia = re.compile(r'(Via:|v:) SIP/2.0/(.*) ', re.MULTILINE)
 
     @property
     def data(self):
@@ -279,7 +279,7 @@ class SIPCounter(object):
         else:
             m = self.reVia.search(sipmsg)
             if m:
-                proto = m.group()[13:16]
+                proto = m.group(2)
             else:
                 proto = 'udp'
         link.extend([proto.lower(), service_port, client_port])
