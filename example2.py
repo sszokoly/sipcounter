@@ -1,4 +1,3 @@
-import datetime
 import time
 from subprocess import Popen, PIPE
 from SIPCounter import SIPCounter
