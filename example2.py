@@ -21,7 +21,7 @@ while True:
             sipmsg = '\r\n'.join((''.join(x) for x in z))
             sipcounter.add(sipmsg, None, srcip, srcport, dstip, dstport)
         elif output == '' and p.poll() is not None:
-            break
+            raise KeyboardInterrupt
         else:
             time.sleep(0.1)
     except KeyboardInterrupt:
