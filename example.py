@@ -1,5 +1,5 @@
-from SIPCounter import SIPCounter
 import random
+from SIPCounter import SIPCounter
 
 req = '%s sip\r\nCSeq: 1 %s\r\nVia: SIP/2.0/%s 1\r\nTo: 1;%s\r\n'
 resp = 'SIP/2.0 %s Bla\r\nCSeq: 1 %s\r\nVia: SIP/2.0/%s 1\r\n'
@@ -46,8 +46,9 @@ def response_generator():
 request = request_generator()
 response = response_generator()
 sipcounter = SIPCounter(name='SIP Server 1.1.1.{1,2}',
-                        known_servers=set(['1.1.1.1', '1.1.1.2']), 
+                        known_servers=set(['1.1.1.1', '1.1.1.2']),
                         known_ports=set(['5062']))
+
 for x in xrange(0,9000):
     sipmsg, srcip, srcport, dstip, dstport, proto = request.next()
     sipcounter.add(sipmsg, None, srcip, srcport, dstip, dstport, proto)
