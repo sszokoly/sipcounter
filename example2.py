@@ -25,7 +25,10 @@ while True:
         else:
             time.sleep(0.1)
     except KeyboardInterrupt:
+        p.terminate()
+        p.wait()
         print(sipcounter.pprint(title=time.strftime("%Y-%m-%d %H:%M:%S")))
+        break
 
 #2018-01-12 13:58:48                   OPTIONS   403
 #Localhost                             --> <-- --> <--
