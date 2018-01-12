@@ -22,14 +22,14 @@ while True:
             sipmsg = '\r\n'.join((''.join(x) for x in z))
             sipcounter.add(sipmsg, None, srcip, srcport, dstip, dstport)
         elif output == '' and p.poll() is not None:
-            raise KeyboardInterrupt
+            break
         else:
             time.sleep(0.1)
     except KeyboardInterrupt:
         p.terminate()
         p.wait()
-        print(sipcounter.pprint(title=time.strftime("%Y-%m-%d %H:%M:%S")))
         break
+print(sipcounter.pprint(title=time.strftime("%Y-%m-%d %H:%M:%S")))
 
 #2018-01-12 13:58:48                   OPTIONS   403
 #Localhost                             --> <-- --> <--
