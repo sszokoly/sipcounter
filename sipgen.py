@@ -46,7 +46,7 @@ def response_generator():
 
 request = request_generator()
 response = response_generator()
-sipcounter = SIPCounter(name='SBCE Cone-A',
+sipcounter = SIPCounter(name='SIP Server 1.1.1.{1,2}',
                         known_servers=set(['1.1.1.1', '1.1.1.2']), 
                         known_ports=set(['5062']))
 for x in xrange(0,1000):
