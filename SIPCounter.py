@@ -1,8 +1,8 @@
+import re
 from collections import defaultdict, Counter, OrderedDict
 from copy import deepcopy
 from itertools import chain
 from operator import itemgetter
-import re
 
 class SIPCounter(object):
     """

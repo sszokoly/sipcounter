@@ -28,7 +28,7 @@ while True:
         p.terminate()
         p.wait()
         break
-print(sipcounter.pprint(title=time.strftime("%Y-%m-%d %H:%M:%S")))
+print(sipcounter.pprint(title=time.strftime('%Y-%m-%d %H:%M:%S')))
 
 #2018-01-12 13:58:48                   OPTIONS   403
 #Localhost                             --> <-- --> <--
