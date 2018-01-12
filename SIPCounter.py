@@ -503,7 +503,7 @@ class SIPCounter(object):
         if data is None:
             data = self.groupby(depth=depth)
         if not data:
-            return '\n'
+            return ''
         elif summary:
             s = self.summary(data=data)
             sl = len(''.join(next(s.iterkeys())))
