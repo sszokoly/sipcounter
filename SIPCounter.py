@@ -411,10 +411,10 @@ class SIPCounter(object):
         And so on.
 
         :param depth: (int) indicating how deep into the key, which is
-        a tuple of potentially five strings, the method should look
-        into when grouping the Counters together.
-        :return (OrderedDict) grouped and ordered by Server, Client
-        and protocol.
+                      a tuple of potentially five strings, the method
+                      should look into when grouping the Counters.
+        :return: (OrderedDict) grouped and ordered by Server, Client
+                and protocol.
         """
         depth = max(min(5, int(depth)), 0)
         if depth == 5:
@@ -438,7 +438,7 @@ class SIPCounter(object):
         :param n: (int) how many of the busiest links to return
         :param depth: (int) indicating how deep into the key, which is
                       a tuple of potentially five strings, the method
-                      should look into when grouping the Counters together.
+                      should look into when grouping the Counters.
         :return: (OrderedDict) grouped and ordered by Server, Client and
                  protocol.
         """
