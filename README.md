@@ -38,7 +38,7 @@ This will yield something like:
 
 ### Example ###
 
-Another example would to capture the message on the wire with tshark.
+Another example would be to capture the messages on the wire with tshark.
 
 ```
 import time
@@ -74,7 +74,7 @@ while True:
 print(sipcounter.pprint(title=time.strftime('%Y-%m-%d %H:%M:%S')))
 ```
 
-With output upin CTRL^C:
+With possible output upon CTRL^C:
 
 ```
 2018-0114 16:01:10          INVITE   ReINVITE    BYE      CANCEL     500       503       600   
