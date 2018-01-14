@@ -77,7 +77,7 @@ print(sipcounter.pprint(title=time.strftime('%Y-%m-%d %H:%M:%S')))
 With possible output upon CTRL^C:
 
 ```
-2018-0114 16:01:10          INVITE   ReINVITE    BYE      CANCEL     500       503       600   
+2018-01-14 16:01:10         INVITE   ReINVITE    BYE      CANCEL     500       503       600   
 Localhost                 ---> <--- ---> <--- ---> <--- ---> <--- ---> <--- ---> <--- ---> <--- 
 1.1.1.1-tcp-5060-2.2.2.1    43   59  196  166  109  128  123  107  142  150  127  146  142  146
 1.1.1.1-tls-5061-2.2.2.1    75   65  156  175  100  124  114   96  171  153  154  145  156  142
