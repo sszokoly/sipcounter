@@ -1,5 +1,5 @@
 import random
-from SIPCounter import SIPCounter
+from sipcounter import SIPCounter
 
 req = '%s sip\r\nCSeq: 1 %s\r\nVia: SIP/2.0/%s 1\r\nTo: 1;%s\r\n'
 resp = 'SIP/2.0 %s Bla\r\nCSeq: 1 %s\r\nVia: SIP/2.0/%s 1\r\n'

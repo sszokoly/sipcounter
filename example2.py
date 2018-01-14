@@ -1,6 +1,6 @@
 import time
 from subprocess import Popen, PIPE
-from SIPCounter import SIPCounter
+from sipcounter import SIPCounter
 
 sipcounter = SIPCounter(name='Localhost')
 cmd = ['tshark', '-l', '-n', '-i', 'any', 'tcp', '-R', 'sip',
