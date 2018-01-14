@@ -20,7 +20,7 @@ sipcounter = SIPCounter(
             stamp, sipmsg, msgdir, srcip, srcport, dstip, dstport = reader.next()
             sipcounter.add(sipmsg, msgdir, srcip, srcport, dstip, dstport)
         except:
-            print sipcounter.pprint(title='2018-0101 01:01:00')
+            print(sipcounter.pprint(title='2018-0101 01:01:00'))
             break
 ```
 
