@@ -42,7 +42,7 @@ class SIPCounter(object):
     SUMMARY                     26   20   76   82    1    0    1    0
 
     """
-    SORT_ORDER = {
+    ORDER = {
         'INVITE': 0,
         'ReINVITE': 1,
         'BYE': 2,
@@ -376,12 +376,14 @@ class SIPCounter(object):
          ('1.1.1.1', '2.2.2.2', 'tcp', '5062', '33335'):  {'<-': Counter({'INVITE': 1})},
          ('1.1.1.1', '2.2.2.2', 'tls', '5061', '33336'):  {'<-': Counter({'INVITE': 1})}}
 
-        Calling groupby(depth=5) would only sort and so return an
+        Calling groupby(depth=5) would only sort and return an
         OrderedDict placing the Counters between '1.1.1.1' and '2.2.2.2'
         first before that of '1.1.1.1' and '3.3.3.3'.
-        Calling groupby(depth=4) would not only sort the links but also
-        merge the Counters of '1.1.1.1' and '2.2.2.2' over 'tcp', port
-        '5060' ignoring the client side ports used ('33332' and '33333').
+
+        Calling groupby(depth=4), default, would not only sort the links
+        but also merge the Counters of '1.1.1.1' and '2.2.2.2' over
+        'tcp', port '5060' ignoring the client side ports used, '33332'
+        and '33333'.
 
         OrderedDict([.....
         ('1.1.1.1', '2.2.2.2', 'tcp', '5060'):  {'<-': Counter({'INVITE': 2})},
@@ -427,7 +429,8 @@ class SIPCounter(object):
                         g.setdefault(link[0:depth], {}
                         ).setdefault(k, Counter()
                         ).update(self._data[link][k])
-        l = sorted(g.iterkeys(), key=depth and itemgetter(*range(0, depth)) or None)
+        l = sorted(g.iterkeys(), key=depth and itemgetter(*range(0, depth)) or
+                                               None)
         return OrderedDict((k, g[k]) for k in l)
 
     def most_common(self, n=None, depth=4):
@@ -480,12 +483,12 @@ class SIPCounter(object):
             data = self._data
         s = set(x for s in data.values() for y in s.values() for x in y)
         requests = sorted((x for x in s if not x.isdigit()),
-                   key=lambda x: self.SORT_ORDER.get(x, len(self.SORT_ORDER)))
+                           key=lambda x: self.ORDER.get(x, len(self.ORDER)))
         responses = sorted((x for x in s if x.isdigit()))
         return requests + responses
 
     def pprint(self, depth=4, title='', header=True, links=True, summary=True,
-                     data=None):
+               data=None):
         """
         Convenience method to provide a basic readable output of the
         self._data dictionary. The representation of the self._data is
@@ -539,18 +542,15 @@ class SIPCounter(object):
             if directions > 1:
                 output.append(''.join((
                     self.name.ljust(link_width),
-                    len(elements) * (
-                        ' '.join((
+                    len(elements) * (' '.join((
                         self.dirOut.rjust(column_width/directions, '-'),
                         self.dirIn.ljust(column_width/directions, '-')))
-                        + ' ')
-                            )))
+                        + ' '))))
             else:
                 output.append(''.join((
                     self.name.ljust(link_width),
-                    len(elements) * (
-                        ''.join(('-'.center(column_width, '-'))) + ' ')
-                             )))
+                    len(elements) * (''.join((
+                        '-'.center(column_width, '-'))) + ' '))))
         l = []
         if links:
             l.append(data)
@@ -572,11 +572,8 @@ class SIPCounter(object):
                         c.append(str(d[k].get(self.dirIn, {}).get(elem, 0)))
                     else:
                         c.append(str(d[k].get(self.dirBoth, {}).get(elem, 0)))
-                output.append(
-                    ''.join((
-                        link.ljust(link_width),
-                        ' '.join(x.rjust(column_width/directions) for x in c)
-                            )))
+                output.append(''.join((link.ljust(link_width), ' '.join(
+                             x.rjust(column_width / directions) for x in c))))
         output.append('')
         return '\n'.join(output)
 
@@ -587,7 +584,7 @@ class SIPCounter(object):
 
     def __add__(self, other):
         if type(self) != type(other):
-            raise TypeError('can only add SIPCounter to another SIPCounter')
+            raise TypeError('can only add SIPCounter to a SIPCounter')
         sip_filter = self.sip_filter | other.sip_filter
         host_filter = self.host_filter | other.host_filter
         known_servers = self.known_servers | other.known_servers
@@ -606,7 +603,7 @@ class SIPCounter(object):
 
     def __sub__(self, other):
         if type(self) != type(other):
-            raise TypeError('can only subtract SIPCounter from another SIPCounter')
+            raise TypeError('can only subtract SIPCounter from a SIPCounter')
         sip_filter = self.sip_filter - other.sip_filter
         host_filter = self.host_filter - other.host_filter
         known_servers = self.known_servers - other.known_servers
@@ -625,7 +622,7 @@ class SIPCounter(object):
 
     def __iadd__(self, other):
         if type(self) != type(other):
-            raise TypeError('can only add to SIPCounter another SIPCounter')
+            raise TypeError('can only add SIPCounter to a SIPCounter')
         self.sip_filter = self.sip_filter | other.sip_filter
         self.reSIPFilter = re.compile(r'(%s)' % '|'.join(self.sip_filter))
         self.host_filter = self.host_filter | other.host_filter
@@ -636,7 +633,7 @@ class SIPCounter(object):
 
     def __isub__(self, other):
         if type(self) != type(other):
-            raise TypeError('can only subtract from a SIPCounter another SIPCounter')
+            raise TypeError('can only subtract SIPCounter from a SIPCounter')
         self.sip_filter = self.sip_filter - other.sip_filter
         self.reSIPFilter = re.compile(r'(%s)' % '|'.join(self.sip_filter))
         self.host_filter = self.host_filter - other.host_filter
@@ -664,13 +661,11 @@ class SIPCounter(object):
         return self.total != other.total
 
     def __repr__(self):
-        s = "SIPCounter(name='%s', sip_filter=%s, host_filter=%s, known_servers=%s, known_ports=%s, data=%s)"
-        return s % (self.name,
-                    self.sip_filter,
-                    self.host_filter,
-                    self.known_servers,
-                    self.known_ports,
-                    self._data)
+        r = ['name="%s"', 'sip_filter=%s', 'host_filter=%s',
+             'known_servers=%s', 'known_ports=%s','data=%s']
+        return ', '.join(r) % (self.name, self.sip_filter,
+                               self.host_filter, self.known_servers,
+                               self.known_ports, self._data)
 
     def __str__(self):
         return '<%s instance at %s>' % (self.__class__.__name__, id(self))
