@@ -36,15 +36,16 @@ This will yield something like:
 
 ### Example ###
 
-Another example would be to capture the messages on the wire with tshark and print out the top 3 
-busiest links (most total amount of messages) and the summary.
+Another example would be to capture all SIP messages over TCP on the wire with tshark and pprint 
+the top 3 busiest links (those with the highest total amount of messages) including the summary.
 
 ```
 import time
 from subprocess import Popen, PIPE
 from sipcounter import SIPCounter
 
-sipcounter = SIPCounter(name='Localhost')
+sipcounter = SIPCounter(name='Localhost', 
+                        sip_filter=set(['INVITE', 'ReINVITE', 'BYE', 'CANCEL', '4', '5', '6']))
 cmd = ['tshark', '-l', '-n', '-i', 'any', 'tcp', '-R', 'sip',
        '-E', 'separator=|', '-T', 'fields',
        '-e', 'ip.src', '-e', 'tcp.srcport',
@@ -78,7 +79,7 @@ With a possible output below upon CTRL^C:
 
 ```
 Top 3                    INVITE   ReINVITE    BYE      CANCEL     500       503       600   
-SIP Server 1.1.1.{1,2} ---> <--- ---> <--- ---> <--- ---> <--- ---> <--- ---> <--- ---> <--- 
+Localhost              ---> <--- ---> <--- ---> <--- ---> <--- ---> <--- ---> <--- ---> <--- 
 1.1.1.2-2.2.2.1         175  171  507  513  354  343  323  326  459  452  428  461  447  441
 1.1.1.1-2.2.2.1         113   95  341  359  240  212  233  219  309  278  296  284  312  295
 1.1.1.2-2.2.2.2          84   93  253  252  169  190  163  161  255  234  215  222  231  224
