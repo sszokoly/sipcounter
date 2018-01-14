@@ -1,11 +1,9 @@
 # sipcounter
 Implements a simple SIP message counter with optional direction, source/destination IP, protocol and port tracking.
 It is meant to be used to count the SIP requests and responses per link. A link is comprised of the source and
-destination host IP address, the transport protocol type (TLS, TCP, UDP) and the ports. It can filter and count 
-only certian type of SIP messages, for instance one might wish to monitor only the INVITE and ReINVITE requests
-and any corresponding error messages, see example below. The internal self._data storage may be printed out using
-the 'pprint' convenience method or processed through other means before clearing the counters and starting to count
-all over again.
+destination host IP addresses, the transport protocol type (TLS, TCP, UDP) and the ports. The internal self._data
+dictionary may be printed out using the 'pprint' convenience method or processed through other means before 
+clearing the counters and starting to count all over again.
 
 ### Example ###
 To count only INVITE and ReINVITE messages and their corresponding errors reponses (4xx, 5xx, 6xx):
@@ -71,6 +69,7 @@ while True:
         p.terminate()
         p.wait()
         break
+
 print(sipcounter.pprint(title=time.strftime('%Y-%m-%d %H:%M:%S')))
 ```
 
