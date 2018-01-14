@@ -6,34 +6,40 @@ from operator import itemgetter
 
 class SIPCounter(object):
     """
-    Simple SIP request/response message counter implementation with optional
-    direction and source/destination/protocol/port indication. It is meant to
-    be used to track the number SIP message types per link. A link comprises
-    of the source/destination host IP address, the transport protocol type
-    (TLS, TCP, UDP) and the ports. It's primary use could be to collect basic
-    per link or total SIP statistics or to monitor the occurrences of certain
-    types of SIP errors. For instance one may wish to monitor only the INVITE
-    (and ReINVITE which are distinguished from initial INVITE) messages and
-    any corresponding error responses. The result may be printed out using the
-    'pprint' method before clearing the counters and starting all over again.
+    Implements a simple SIP message counter with optional direction,
+    source/destination IP, protocol and port tracking. It is meant
+    to be used to count the SIP requests and responses only per link.
+    A link is comprised of the source/destination host IP address,
+    the transport protocol type (TLS, TCP, UDP) and the ports. It can
+    filter and count only certian type of SIP messages, for instance
+    one might wish to monitor only the INVITE and ReINVITE requests
+    and any corresponding error messages, see example below. The
+    internal self._data storage may be printed out using the 'pprint'
+    convenience method or processed through other means before
+    clearing the counters and starting to count all over again.
 
-    A simple use of this class would be as follows:
+    To count only INVITE and ReINVITE messages and their corresponding
+    errors reponses (4xx, 5xx, 6xx) create an instance as follows:
 
-    sipcounter = SIPCounter(name='SBCE Cone-A',
-                            sip_filter=set(['INVITE','ReINVITE','4','5','6']),
-                            known_servers=set(['1.1.1.1']))
+    sipcounter = SIPCounter(
+                    name='SBCE Cone-A',
+                    sip_filter=set(['INVITE','ReINVITE','4','5','6']),
+                           )
     while 1:
         try:
-            tstamp, sipmsg, msgdir, srcip, srcport, dstip, dstport = sip.next()
+            stamp, sipmsg, msgdir, srcip, srcport, dstip, dstport = sip.next()
             sipcounter.add(sipmsg, msgdir, srcip, srcport, dstip, dstport)
         except:
             print sipcounter.pprint(title='2018-0101 01:01:00')
+            break
 
-    2018-0101 01:01:00          INVITE   ReINVITE    500       503       600
-    SBCE Cone-A               ---> <--- ---> <--- ---> <--- ---> <--- ---> <---
-    1.1.1.1-tcp-5060-2.2.2.1    13   10   40   40    1    0    0    0    0    0
-    1.1.1.1-tls-5061-2.2.2.1    13   10   36   42    0    0    1    0    1    0
-    SUMMARY                     26   20   76   82    1    0    1    0    1    0
+    This will yield something like this:
+
+    2018-0101 01:01:00          INVITE   ReINVITE    503       600
+    SBCE Cone-A               ---> <--- ---> <--- ---> <--- ---> <---
+    1.1.1.1-tcp-5060-2.2.2.1    13   10   40   40    0    0    0    0
+    1.1.1.1-tls-5061-2.2.2.1    13   10   36   42    1    0    1    0
+    SUMMARY                     26   20   76   82    1    0    1    0
 
     """
     SORT_ORDER = {
@@ -57,90 +63,96 @@ class SIPCounter(object):
     }
     def __init__(self, **kwargs):
         """
-        Initializes a SIPCounter instance with optional keyword arguments.
+        Initializes a SIPCounter instance with optional arguments.
         The following keyword argument are available:
 
-        sip_filter: serves as a SIP message count filter, out of which is
-                    built a regex object which is used to match the request
-                    methods of interest and the corresponding responses.
-                    If not provided a default '.*' pattern is used which will
-                    match all requests and responses. For example to count
-                    only INVITE and ReINVITE messages and any error responses
-                    for these requests one should pass the following set:
+        sip_filter: serves as a SIP message count filter, out of which
+                    is built a regex object which is used to match the
+                    request methods of interest and the corresponding
+                    responses. If not provided a default '.*' pattern
+                    is used which will match all requests and responses.
+                    For example to count only INVITE and ReINVITE
+                    messages and any error responses for these requests
+                    one should pass the following set:
 
                     sip_filter=set(['INVITE', 'ReINVITE', '4', '5', '6'])
 
-                    It is also possible to define more specifically the errors.
-                    For example to pass this keyword argument:
+                    It is also possible to be more specific. For example:
 
-                    sip_filter=set(['INVITE', 'ReINVITE', '408', '5', '6'])
+                    sip_filter=set(['INVITE', 'ReINVITE', '408', '503'])
 
         host_filter: serves as a host capture filter, if the source and
-                    destination IP address is provided the SIP message will
+                    destination IP address is provided a SIP message will
                     only be counted if either the origin (srcip) or the
-                    recipient (dstip) of the SIP message is in this set.
-                    For example to pass this keyword argument:
+                    recipient (dstip) of the message is in this set.
+                    For example:
 
                     host_filter=set(['1.1.1.1', '2.2.2.2', '3.3.3.3'])
 
-        known_servers: this serves as a helper to the logic which determines
-                    which of the two communicating parties may be the SIP
-                    Server/Proxy and which the Client. The internal logic of
-                    this class tries to guess the Server (or Local) and the
-                    Client (or Remote) side of the SIP message if the consumer
-                    of this class provides the srcip, srcport, dstip, dstport
-                    arguments to the 'add' method. If the internal logic fails
-                    to determine correctly the role of the communicating
-                    parties then the data may end up being incorrect or show up
-                    incorrectly, in wrong order or with wrong services port.
-                    If so it could help to specify the IP addresses of the
-                    known servers/proxies/session border controllers.
-                    For example to pass this keyword argument:
+        known_servers: the internal logic of this class tries to guess
+                    the Server (or Local) and the Client (or Remote) side
+                    when processing a SIP message based on the received
+                    message direction (msgdir) or port numbers (srcport,
+                    dstport) when these arguments are provided. If this
+                    logic fails to determine correctly the role of the
+                    communicating parties then the data may end up being
+                    counted under a new link as opposed to an already
+                    existing link or a link (dictionary key) will be
+                    created with order swopped. This argument serves as
+                    a helper to the internal logic and takes precedence
+                    over the srcport/dstport arguments. For example:
 
                     known_servers=set(['1.1.1.2', '1.1.1.1'])
 
-        known_ports: this is yet another helper set to the internal logic to
-                    help determine which of the two communicating parties may
-                    be the Server (or Local) side and which the Client
-                    (or Remote) side. This may only be required if not the
-                    well-known SIP ports (5060,5061) are used. For example if
-                    the SIP service is running on port 5070 and 5080 use the
-                    following argument: (strings instead of integers!)
+        known_ports: this is yet another helper set to the internal logic
+                    to help determine which of the two communicating
+                    parties may be the Server (or Local) side and which
+                    the Client (or Remote) side. This may only be required
+                    if the SIP service is not running on the well-known
+                    SIP ports which are port 5060 or 5061. For example:
 
                     known_ports=set(['5070', '5080'])
 
-        data:       In rare situations there may be a need to initialize this
-                    object with some data prior to incrementing the counters
-                    using the 'add' or 'update' methods.The internal self._data
-                    storeage format is as follows:
+        data:       In rare situations there may be a need to initialize
+                    an instance with some data (default counts) prior to
+                    incrementing the counters through the 'update' or
+                    'add' methods. This argument has to have the same
+                    format as the internal self._data storeage.
 
-                    {('<server ip>', '<client ip>', '<protocol>',
-                      '<service port>', '<client port>') : {'msgdir' : Counter(
-                      {'<sip message type>' : int, '<sip message type>' : int, ...})
+                    {('<server ip>',    # tuple of strings as key
+                      '<client ip>',
+                      '<protocol>',
+                      '<service port>',
+                      '<client port>') :
+                      {'msgdir' : Counter(     # dictionary as value
+                                    {'<sip message type>' : int,
+                                    '<sip message type>' : int,
+                                    ...})
                       }, ...}
 
                     For example to initialize an instance with some data:
 
                     data={('1.1.1.1', '2.2.2.2', 'tcp', '5060', '34556'):
-                    {'<-': Counter({'INVITE': 1}), '->': Counter({'200': 1})}}
+                    {'<-': Counter({'INVITE': 1, 'ReINVITE': 1}),
+                     '->': Counter({'200': 1, '100': 1})}}
 
-        name:       this is used for housekeeping purposes, for example it can
-                    store the name of the system where the SIP messages are
-                    captured or the timestamp of when the instance was created.
+        name:       the name of the class instance, for example it can
+                    store the name of the host where the SIP messages
+                    are captured or the timestamp of when the instance
+                    was created or cleared last time.
 
-        :param kwargs: sip_filter (set): SIP message capture filter
-                       host_filter (set): SIP host capture filter
-                       known_servers (set): known SIP servers/proxies
-                       known_ports (set): known SIP services ports in addition
-                                          to the well-known port 5060 and 5061
-                       data (dict): internal data storage of counters
-                       name (string): name of this instance
+        :param      sip_filter: (set) SIP message capture filter
+                    host_filter: (set) SIP host capture filter
+                    known_servers: (set) known SIP servers/proxies
+                    known_ports: (set) known SIP services ports
+                                 excluding 5060, 5061
+                    data: (dict) to prepopulate self._data
+                    name: (string) name of the instance
         """
         self.sip_filter = kwargs.get('sip_filter', set(['.*']))
         self.host_filter = kwargs.get('host_filter', set())
         self.known_servers = kwargs.get('known_servers', set())
-        self.known_ports = kwargs.get('known_ports', set())|(set(['5060','5061']))
-        self.reSIPFilter = re.compile(r'(%s)' % '|'.join(self.sip_filter))
+        self.known_ports = kwargs.get('known_ports', set())
         self._data = kwargs.get('data', {})
         self.name = kwargs.get('name', '')
         self.dirIn = '<-'
@@ -148,8 +160,10 @@ class SIPCounter(object):
         self.dirBoth = '<>'
         self.local = 'local'
         self.remote = 'remote'
+        self.known_ports = self.known_ports | set(['5060', '5061'])
+        self.reSIPFilter = re.compile(r'(%s)' % '|'.join(self.sip_filter))
         self.reReINVITE = re.compile(r'(To:|t:) .*(tag=)', re.MULTILINE)
-        self.reCSeq = re.compile(r'(CSeq: .*)', re.MULTILINE)
+        self.reCSeq = re.compile(r'CSeq: \d+ (\w+)', re.MULTILINE)
         self.reVia = re.compile(r'(Via:|v:) SIP/2.0/(.*) ', re.MULTILINE)
 
     @property
@@ -159,7 +173,7 @@ class SIPCounter(object):
     @property
     def total(self):
         """
-        This sums up all the Counter() objects found in self._data.
+        Sums up all the Counter() objects found in self._data.
         :return: int
         """
         return sum(z for x in self._data.values()
@@ -168,39 +182,39 @@ class SIPCounter(object):
 
     def add(self, sipmsg, msgdir=None, *args):
         """
-        :param sipmsg: (string): the SIP message
-        :param msgdir: (string): determines the direction of
-                        the message and consequently the order in which the
-                        communicating parties are placed into the internal
-                        self._data dictionary as key. The direction can be
-                        either 'IN' or 'OUT'.
-        :param args:   (tuple of strings): this tuple contains the details of
-                        the communicating parties in the order depicted below.
+        :param sipmsg: (string) the SIP message body
+        :param msgdir: (string) determines the direction of
+                        the message and consequently the order in which
+                        the communicating parties are placed into the
+                        self._data dictionary as key. The direction can
+                        be 'IN' for incoming or else for outgoing.
+        :param args:   (tuple of strings) contains the details of the
+                        communicating parties in the order shown below:
 
                         (srcip, srcport, dstip, dstport, [proto])
 
-                        the proto(col) is optional, if not provided it will be
-                        extracted from the top Via header.
+                        the [proto]col is optional, if not provided it
+                        will be extracted from the top Via header.
 
-                        For exaple both are valid for args:
+                        For example both are valid for args:
 
                         ('1.1.1.1', '5060', '2.2.2.2', '34556', 'TCP')
                         ('1.1.1.1', '5060', '2.2.2.2', '34556')
 
-                        In the example above since the srcport is a well-known
-                        SIP service port and the other is not and the
-                        known_servers set also does not indicate neither IP
-                        address to be a server, nor the known_ports set
-                        dictates otherwise the message above will be counted
-                        towards the following link places into the internal
-                        self._data dictionary as a key:
+                        In the example above since the srcport is a
+                        well-known SIP service port and the other is not
+                        and the known_servers set also does not indicate
+                        neither IP address to be a server, furthermore
+                        the known_ports set also does not dictate
+                        otherwise the SIP message will be counted
+                        towards the link placed into self._data as a key
+                        as follows:
 
                         ('1.1.1.1', '2.2.2.2', 'tcp', '5060', '34556')
 
-                        Any further messages between these two entities using
-                        TCP, service port 5060 and client port 34556 will be
-                        counted under this key.
-
+                        Any further messages between these two entities
+                        using parameters listed in the tuple above will
+                        be counted under the same key.
         :return: None
         """
         if args:
@@ -216,7 +230,7 @@ class SIPCounter(object):
                 msgtype = 'ReINVITE'
         m = self.reCSeq.search(sipmsg)
         if m:
-            method = m.group().split()[2]
+            method = m.group(1)
         elif msgtype[0].isdigit():
             method = 'UNKNOWN'
         else:
@@ -227,8 +241,6 @@ class SIPCounter(object):
                 msgdir = self.dirIn
             else:
                 msgdir = self.dirOut
-            link = [self.local, self.remote]
-            service_port, client_port = '', ''
         elif args:
             if self.known_servers:
                 if srcip in self.known_servers:
@@ -271,7 +283,7 @@ class SIPCounter(object):
                 service_port = srcport
                 client_port = dstport
         else:
-            link = ['', '']
+            link = [self.local, self.remote]
             service_port, client_port = '', ''
         # Determining protocol
         if proto:
@@ -290,23 +302,20 @@ class SIPCounter(object):
 
     def update(self, iterable, subtract=False):
         """
-        This method serves to modify the internal Counters directly.
-        Many other methods use this internally. It is very unlikely
-        to be used often directly by the consumer of this Class.
-        :param iterable: (dict): of the same type as the internal self._data
-                         it is primary purpose is to allow access to the
-                         internal collections.Counters in order to update
-                         their values. It is very unlikely to be used often
-                         directly.
-
-                         For example:
+        Updates the internal Counters. Other methods use this too.
+        It is unlikely to be used often directly by the consumer of
+        this class.
+        :param iterable: (dict) of the same type as the self._data,
+                         it's primary purpose is to allow access to
+                         the internal collections.Counters in order
+                         to  update their values. For example:
 
                          {('1.1.1.1', '2.2.2.2', 'tcp', '5060', '34556'):
                          {'<-': Counter({'UPDATE': 1, 'ReINVITE': 1}),
                          '->': Counter({'200': 1, '100': 1})}}
 
-        :param subtract: (bool): if the internal Counter is to be
-                                 subtracted from and not added to.
+        :param subtract: (bool) if the internal Counter is to be
+                          subtracted from and not added to.
         :return: None
         """
         if isinstance(iterable, dict):
@@ -323,8 +332,8 @@ class SIPCounter(object):
 
     def clear(self):
         """
-        Clears the internal self._data dictionary. This can be used when
-        for example a new sampling period begins and the counting needs
+        Clears the self._data dictionary. This can be used when for
+        example a new sampling period begins and the counting needs
         to start from zero.
         :return: None
         """
@@ -348,37 +357,37 @@ class SIPCounter(object):
         """
         Provides the list of internal storage keys (aka links) sorted
                  by Server/Proxy IP, then Client IP, then protocol,
-                 followed by Server side port and finally Client side port.
+                 followed by Server side port and Client side port.
         :return: (list)
         """
         return sorted(self._data.iterkeys(), key=itemgetter(0, 1, 2, 3))
 
     def groupby(self, depth=4):
         """
-        This method has two purposes. One is to group (or add) together the
-        Counters of links depending on how deep the caller would like to look
+        This method has two purposes. One is to group (or add) together
+        the Counters of links depending on how deep the caller looks
         into the self._data keys. The other is to order the grouped
-        dictionary elems. For example there are five separate links in the
-        self._data as follows:
+        dictionary elems. Let's assume there are five separate links in
+        the self._data as follows:
 
-        {('1.1.1.1', '2.2.2.2', 'tcp', '5060', '33332'):  {'<-': Counter({'UPDATE': 1})},
-         ('1.1.1.1', '2.2.2.2', 'tcp', '5060', '33333'):  {'<-': Counter({'UPDATE': 1})},
-         ('1.1.1.1', '3.3.3.3', 'tcp', '5060', '33334'):  {'<-': Counter({'UPDATE': 1})},
-         ('1.1.1.1', '2.2.2.2', 'tcp', '5062', '33335'):  {'<-': Counter({'UPDATE': 1})},
-         ('1.1.1.1', '2.2.2.2', 'tls', '5061', '33336'):  {'<-': Counter({'UPDATE': 1})}}
+        {('1.1.1.1', '2.2.2.2', 'tcp', '5060', '33332'):  {'<-': Counter({'INVITE': 1})},
+         ('1.1.1.1', '2.2.2.2', 'tcp', '5060', '33333'):  {'<-': Counter({'INVITE': 1})},
+         ('1.1.1.1', '3.3.3.3', 'tcp', '5060', '33334'):  {'<-': Counter({'INVITE': 1})},
+         ('1.1.1.1', '2.2.2.2', 'tcp', '5062', '33335'):  {'<-': Counter({'INVITE': 1})},
+         ('1.1.1.1', '2.2.2.2', 'tls', '5061', '33336'):  {'<-': Counter({'INVITE': 1})}}
 
-        Calling groupby(depth=5) would only return an OrderedDict placing the
-        Counters between '1.1.1.1' and '2.2.2.2' first before that of '1.1.1.1'
-        with '3.3.3.3' but would not group any links and Counters together.
-        Calling groupby(depth=4) would not only order the links but also merge
-        the Counters of '1.1.1.1' and '2.2.2.2' over 'tcp', port '5060'
-        igonoring the client side ports used ('33332' and '33333').
+        Calling groupby(depth=5) would only sort and so return an
+        OrderedDict placing the Counters between '1.1.1.1' and '2.2.2.2'
+        first before that of '1.1.1.1' and '3.3.3.3'.
+        Calling groupby(depth=4) would not only sort the links but also
+        merge the Counters of '1.1.1.1' and '2.2.2.2' over 'tcp', port
+        '5060' ignoring the client side ports used ('33332' and '33333').
 
         OrderedDict([.....
-        ('1.1.1.1', '2.2.2.2', 'tcp', '5060'):  {'<-': Counter({'UPDATE': 2})},
-        ('1.1.1.1', '2.2.2.2', 'tcp', '5062'):  {'<-': Counter({'UPDATE': 1})},
-        ('1.1.1.1', '2.2.2.2', 'tls', '5061'):  {'<-': Counter({'UPDATE': 1})},
-        ('1.1.1.1', '3.3.3.3', 'tcp', '5060'):  {'<-': Counter({'UPDATE': 1})},
+        ('1.1.1.1', '2.2.2.2', 'tcp', '5060'):  {'<-': Counter({'INVITE': 2})},
+        ('1.1.1.1', '2.2.2.2', 'tcp', '5062'):  {'<-': Counter({'INVITE': 1})},
+        ('1.1.1.1', '2.2.2.2', 'tls', '5061'):  {'<-': Counter({'INVITE': 1})},
+        ('1.1.1.1', '3.3.3.3', 'tcp', '5060'):  {'<-': Counter({'INVITE': 1})},
         ...])
 
         Calling groupby(depth=3) would order and merge the Counters of
@@ -386,25 +395,26 @@ class SIPCounter(object):
         or client side ports used.
 
         OrderedDict([.....
-        ('1.1.1.1', '2.2.2.2', 'tcp'), {'<-': Counter({'UPDATE': 3})}),
-        ('1.1.1.1', '2.2.2.2', 'tls'), {'<-': Counter({'UPDATE': 1})}),
-        ('1.1.1.1', '3.3.3.3', 'tcp'), {'<-': Counter({'UPDATE': 1})}),
+        ('1.1.1.1', '2.2.2.2', 'tcp'), {'<-': Counter({'INVITE': 3})}),
+        ('1.1.1.1', '2.2.2.2', 'tls'), {'<-': Counter({'INVITE': 1})}),
+        ('1.1.1.1', '3.3.3.3', 'tcp'), {'<-': Counter({'INVITE': 1})}),
         ...])
 
-        Calling groupby(depth=2) would merge even further the Counters in
-        addition to ordering them:
+        Calling groupby(depth=2) would merge even further the Counters
+        in addition to sorting them:
 
         OrderedDict([.....
-        ('1.1.1.1', '2.2.2.2'), {'<-': Counter({'UPDATE': 4})}),
-        ('1.1.1.1', '3.3.3.3'), {'<-': Counter({'UPDATE': 1})}),
+        ('1.1.1.1', '2.2.2.2'), {'<-': Counter({'INVITE': 4})}),
+        ('1.1.1.1', '3.3.3.3'), {'<-': Counter({'INVITE': 1})}),
         ...])
 
         And so on.
 
-        :param depth: (int): indicating how deep into the key, which is a
-        tuple of potentially five strings, the method should look into when
-        grouping the Counters together.
-        :return: (OrderedDict): grouped and ordered by Server/Client/Protocol
+        :param depth: (int) indicating how deep into the key, which is
+        a tuple of potentially five strings, the method should look
+        into when grouping the Counters together.
+        :return (OrderedDict) grouped and ordered by Server, Client
+        and protocol.
         """
         depth = max(min(5, int(depth)), 0)
         if depth == 5:
@@ -422,14 +432,15 @@ class SIPCounter(object):
 
     def most_common(self, n=None, depth=4):
         """
-        Returns an OrderedDict of the n busiest links starting in descending
-        order. Optionally it groups (merged) links depending on how many
-        elements of the tuple as key is to be considered significant.
-        :param n: (int): how many of the busiest links to return
-        :param depth: (int): indicating how deep into the key, which is a
-        tuple of potentially five strings, the method should look into when
-        grouping the Counters together.
-        :return: (OrderedDict): grouped and ordered by Server/Client/Protocol
+        Returns an OrderedDict of the n busiest links in descending
+        order. Optionally it groups (merged) links depending on how
+        many elements of the key is to be considered significant.
+        :param n: (int) how many of the busiest links to return
+        :param depth: (int) indicating how deep into the key, which is
+                      a tuple of potentially five strings, the method
+                      should look into when grouping the Counters together.
+        :return: (OrderedDict) grouped and ordered by Server, Client and
+                 protocol.
         """
         g = self.groupby(depth=depth)
         d = defaultdict(int)
@@ -443,12 +454,12 @@ class SIPCounter(object):
 
     def summary(self, data=None, title='SUMMARY'):
         """
-        Returns a dictionary with the summary of all Counters per SIP message
-        type captured in the self._data or in the optional self._data like
-        dictionary.
-        :param data: (dict): optional self._data store like dictionary
-        :param title: (string): optional name of the returned dictionary.
-        :return: (dict): with the summary of all Counters
+        Returns a dictionary with the summary of all Counters per SIP
+        message type captured in the self._data or in the optional
+        self._data like 'data' dictionary.
+        :param data: (dict) optional self._data like dictionary
+        :param title: (string) optional key name of the dictionary
+        :return: (dict) with the summary of all Counters.
         """
         if data is None:
             data = self._data
@@ -460,11 +471,10 @@ class SIPCounter(object):
 
     def elements(self, data=None):
         """
-        Returns a list of SIP message types captured since last clear in the
-        self._data internal storage or in the optionally provided self._data
-        like dictionary.
-        :param data: (dict): optional self._data like dictionary
-        :return: (list): list of strings of all the SIP message types
+        Returns a list of SIP message types found in self._data or in
+        the optionally provided self._data like 'data' dictionary.
+        :param data: (dict) optional self._data like dictionary
+        :return: (list) list of strings of all the SIP message types
         """
         if data is None:
             data = self._data
@@ -477,27 +487,27 @@ class SIPCounter(object):
     def pprint(self, depth=4, title='', header=True, links=True, summary=True,
                      data=None):
         """
-        Convenience method to provide a basic readable output of the internal
-        self._data store. The representation of the self._data is subjective,
-        therefore it was not the primary objective of this Class is provide
-        a full fledged pretty print method. Consumers are encouraged to write
-        their own functions to present the content of the internal data
-        store the way that best suits their needs.
-        :param depth: (int): indicating how deep into the key, which is a
-        tuple of potentially four strings, the method should look into when
-        grouping the Counters together.
-        :param title: (string): optional information to print inline with top
-                      line, for example a timestamp
-        :param header: (bool): if the header is to be printed
-        :param links: (bool): if the link lines are to be printed
-        :param summary: (bool): if summary line is to be printed in the end
-        :param data: optional self._data store like dictionary, this may be
-                     used more often. For example to pprint the busiest
-                     5 links one can use this as follows:
+        Convenience method to provide a basic readable output of the
+        self._data dictionary. The representation of the self._data is
+        subjective, therefore the primary objective of this method was
+        to provide a, example. Consumers are encouraged to write their
+        own functions to present the content of the self._data the way
+        that best suits their needs.
+        :param depth: (int) indicating how deep into the key, which is
+                      a tuple of potentially four strings, the method
+                      should look into when grouping the Counters.
+        :param title: (string) optional information to print inline
+                      with top line, for example a timestamp
+        :param header: (bool) if the header is to be printed
+        :param links: (bool) if the individual links are to be printed
+        :param summary: (bool) if summary line is to be printed
+        :param data: (dict) optional self._data like dictionary, this
+                     may be used more often. For example to pprint the
+                     busiest 5 links:
 
                      print sipcounter.pprint(data=sipcounter.most_common(n=5))
 
-        :return: (string): ready to be printed to the screen
+        :return: (string) a ready to be printed representation of self._data
         """
         output = []
         if data is None:
