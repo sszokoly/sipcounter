@@ -23,7 +23,7 @@ class SIPCounter(object):
 
     sipcounter = SIPCounter(
                     name='SBCE Cone-A',
-                    sip_filter=set(['INVITE','ReINVITE','4','5','6']),
+                    sip_filter=set(['INVITE', 'ReINVITE', '4', '5', '6']),
                            )
     while 1:
         try:
@@ -33,7 +33,7 @@ class SIPCounter(object):
             print sipcounter.pprint(title='2018-0101 01:01:00')
             break
 
-    This will yield something like this:
+    This will yield something like:
 
     2018-0101 01:01:00          INVITE   ReINVITE    503       600
     SBCE Cone-A               ---> <--- ---> <--- ---> <--- ---> <---
@@ -64,7 +64,7 @@ class SIPCounter(object):
     def __init__(self, **kwargs):
         """
         Initializes a SIPCounter instance with optional arguments.
-        The following keyword argument are available:
+        The following keyword argument are recognized:
 
         sip_filter: serves as a SIP message count filter, out of which
                     is built a regex object which is used to match the
