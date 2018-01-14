@@ -11,7 +11,7 @@ class SIPCounter(object):
     to be used to count the SIP requests and responses only per link.
     A link is comprised of the source/destination host IP address,
     the transport protocol type (TLS, TCP, UDP) and the ports. It can
-    filter and count only certian type of SIP messages, for instance
+    filter and count only certain type of SIP messages, for instance
     one might wish to monitor only the INVITE and ReINVITE requests
     and any corresponding error messages, see example below. The
     internal self._data storage may be printed out using the 'pprint'
