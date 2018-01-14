@@ -73,7 +73,7 @@ while True:
 print(sipcounter.pprint(title=time.strftime('%Y-%m-%d %H:%M:%S')))
 ```
 
-With possible output upon CTRL^C:
+With a possible output below upon CTRL^C:
 
 ```
 2018-01-14 16:01:10         INVITE   ReINVITE    BYE      CANCEL     500       503       600   
