@@ -32,8 +32,7 @@ This will yield something like:
 
 ### Example ###
 
-Another example would be to capture all SIP messages over TCP on the wire with tshark and pprint 
-the top 3 busiest links (those with the highest total amount of messages) including the summary.
+Another example would be to capture all SIP messages over TCP on the wire with tshark and pprint the top 3 busiest links (those with the highest total amount of messages) including the summary of those 3 links.
 
 ```
 import time
