@@ -364,11 +364,11 @@ class SIPCounter(object):
 
     def groupby(self, depth=4):
         """
-        This method has two purposes. One is to group (or add) together
-        the Counters of links depending on how deep the caller looks
-        into the self._data keys. The other is to order the grouped
-        dictionary elems. Let's assume there are five separate links in
-        the self._data as follows:
+        This method has two purposes. One is to group together the
+        Counters of links by the depth the caller looks into the
+        self._data keys. The other is to order the grouped elements.
+        Let's assume there are five separate links in the self._data
+        as follows:
 
         {('1.1.1.1', '2.2.2.2', 'tcp', '5060', '33332'):  {'<-': Counter({'INVITE': 1})},
          ('1.1.1.1', '2.2.2.2', 'tcp', '5060', '33333'):  {'<-': Counter({'INVITE': 1})},
