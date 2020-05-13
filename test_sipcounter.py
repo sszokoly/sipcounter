@@ -159,7 +159,6 @@ def expectations(
     for _ in range(iterations):
         response_seen = False
         for msgtype, role in scenario:
-
             if msgtype == "INVITE":
                 if response_seen:
                     msgtype = "ReINVITE"
@@ -170,7 +169,6 @@ def expectations(
             except KeyError:
                 counter[role] = Counter()
                 counter[role].update([msgtype])
-
     if msgdir:
         try:
             counters[c.dirOut] = counter["s"]
@@ -184,7 +182,6 @@ def expectations(
         counters[c.dirBoth] = counter["c"] + counter["s"]
 
     return {key: counters}
-
 
 def merge_expectations(
     expectation1, expectation2, subtract=False, compact=True, depth=5
