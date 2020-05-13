@@ -1,3 +1,8 @@
+build/
+dist/
+.__pycache__/
+.vscode/
+.idea/
 *.log
-.idea/*
 *.pyc
+*.egg-info

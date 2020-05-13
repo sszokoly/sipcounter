@@ -1,82 +1,38 @@
 # sipcounter
-Implements a simple SIP message counter with optional direction, source/destination IP, protocol and port tracking. It is meant to be used to count the SIP requests and responses per link. A link is comprised of the source and destination host IP addresses, the transport protocol type (TLS, TCP, UDP) and the ports. The internal self._data dictionary may be printed out using the 'pprint' convenience method or processed through other means before clearing the counters and starting to count all over again.
+This module implements a simple, stateless SIP message counter with optional direction, IP address, protocol and port tracking. When provided with the IP address/protocol/port in addition to the mandatory SIP message body as strings it counts the SIP requests and responses for each communication link. A link thus is comprised of the SIP UA server and client IP addresses, the ports and the transport protocol type (TLS, TCP, UDP) which can also be inferred from the SIP message body if not supplied. It's 'data' dictionary holds the links as keys and a nested dictionary as values which contain another layer of dictionaries for each direction and Counters to keep track of the number of SIP message types sent or received. For a quick visualization it comes with a 'pprint' convenience method. The SIPCounter object has numerous methods similar to those available for the Counter class from the collections module in the standard library.
 
 ### Example ###
-To count only INVITE and ReINVITE messages and their corresponding errors reponses (4xx, 5xx, 6xx):
+To count the number of INVITE and ReINVITE messages and any error responses (4xx, 5xx, 6xx) received in these dialogs:
 
 ```
-from sipcounter import SIPCounter
+>>> from sipcounter import SIPCounter
+>>> c = SIPCounter(name='SBC Cone-A',
+...                sip_filter=set(['INVITE', 'ReINVITE',
+...                                '4', '5', '6']))
+>>> while True:
+...     try:
+...         # the 'reader' is SIP log parser generator
+...         timestamp, sipmsg, msgdir, srcip, srcport, dstip, dstport = next(reader)
+...         c.add(sipmsg, msgdir, srcip, srcport, dstip, dstport)
+...     except:
+...         print(c.pprint(title='2020-0101 01:01:00'))
+...         break
+KeyboardInterrupt
 
-sipcounter = SIPCounter(
-                    name='SBCE Cone-A',
-                    sip_filter=set(['INVITE', 'ReINVITE', '4', '5', '6']))
-    while True:
-        try:
-            # 'reader' is log parser generator
-            stamp, sipmsg, msgdir, srcip, srcport, dstip, dstport = reader.next()
-            sipcounter.add(sipmsg, msgdir, srcip, srcport, dstip, dstport)
-        except:
-            print(sipcounter.pprint(title='2018-0101 01:01:00'))
-            break
-```
-
-This will yield something like:
-
-```
-    2018-0101 01:01:00          INVITE   ReINVITE    503       600
-    SBCE Cone-A               ---> <--- ---> <--- ---> <--- ---> <---
-    1.1.1.1-tcp-5060-2.2.2.1    13   10   40   40    0    0    0    0
-    1.1.1.1-tls-5061-2.2.2.1    13   10   36   42    1    0    1    0
+    2020-0101 01:01:00          INVITE   ReINVITE    503       600
+    SBC Cone-A                ---> <--- ---> <--- ---> <--- ---> <---
+    1.1.1.1-TCP-5060-2.2.2.1    13   10   40   40    0    0    0    0
+    1.1.1.1-TLS-5061-2.2.2.1    13   10   36   42    1    0    1    0
     SUMMARY                     26   20   76   82    1    0    1    0
 ```
+## Requirements
 
-### Example ###
+- Python 2.7-3.x
 
-Another example would be to capture all SIP messages over TCP on the wire with tshark and pprint the top 3 busiest links (those with the highest total amount of messages) including the summary of those 3 links.
+## License
 
-```
-import time
-from subprocess import Popen, PIPE
-from sipcounter import SIPCounter
+MIT, see: LICENSE.txt
 
-sipcounter = SIPCounter(name='Localhost', 
-                        sip_filter=set(['INVITE', 'ReINVITE', 'BYE', 'CANCEL', '4', '5', '6']))
-cmd = ['tshark', '-l', '-n', '-i', 'any', 'tcp', '-R', 'sip',
-       '-E', 'separator=|', '-T', 'fields',
-       '-e', 'ip.src', '-e', 'tcp.srcport',
-       '-e', 'ip.dst', '-e', 'tcp.dstport',
-       '-e', 'sip.Request-Line', '-e', 'sip.Status-Line',
-       '-e', 'sip.CSeq', '-e', 'sip.To', '-e', 'sip.Via']
+## Author
 
-p = Popen(cmd, shell=False, stdout=PIPE, stderr=PIPE)
-while True:
-    try:
-        output = p.stdout.readline()
-        if output:
-            srcip, srcport, dstip, dstport, sipmsg = output.split('|', 4)
-            z = zip(('', 'CSeq: ', 'To: ', 'Via: '),
-                    (x for x in sipmsg.split('|') if x))
-            sipmsg = '\r\n'.join((''.join(x) for x in z))
-            sipcounter.add(sipmsg, None, srcip, srcport, dstip, dstport)
-        elif output == '' and p.poll() is not None:
-            break
-        else:
-            time.sleep(0.1)
-    except KeyboardInterrupt:
-        p.terminate()
-        p.wait()
-        break
-
-print(sipcounter.pprint(title='Top 3', data=sipcounter.most_common(3, depth=2))
-```
-
-With a possible output below upon CTRL^C:
-
-```
-Top 3                    INVITE   ReINVITE    BYE      CANCEL     500       503       600   
-Localhost              ---> <--- ---> <--- ---> <--- ---> <--- ---> <--- ---> <--- ---> <--- 
-1.1.1.1-2.2.2.1         175  171  507  513  154   30    0    6    0    0    0    0    0    0
-1.1.1.1-2.2.2.2         113   95  341  359  140   12    0    9    0    0    0    0    1    0
-1.1.1.1-2.2.2.3          84   93  253  252  169    9    0    1    1    0    1    0    0    0
-SUMMARY                 372  359 1101 1124  463   51    0   16    1    0    1    0    1    0
-```
+Szabolcs Szokoly <mailto:sszokoly@pm.me>
