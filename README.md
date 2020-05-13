@@ -35,4 +35,4 @@ MIT, see: LICENSE.txt
 
 ## Author
 
-Szabolcs Szokoly <a href="sszokoly@pm.me">sszokoly@pm.me</a>
+Szabolcs Szokoly <a href="mailto:sszokoly@pm.me">sszokoly@pm.me</a>
