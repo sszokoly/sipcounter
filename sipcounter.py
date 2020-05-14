@@ -13,13 +13,11 @@ class SIPCounter(object):
     """Implements a simple, stateless SIP message counter with optional
     direction, IP address, protocol and port tracking. When provided with
     the IP address/protocol/port in addition to the mandatory SIP message
-    body as strings it counts the SIP requests and responses for each
-    communication link. A link thus is comprised of the SIP UA server and
-    client IP addresses, the ports and the transport protocol type (TLS,
-    TCP, UDP) which can also be inferred from the SIP message body if
-    not supplied.
+    body it counts the SIP requests and responses for each communication
+    link. A link thus is comprised of the SIP UA server and client IP
+    addresses, the transport protocol type (TLS, TCP, UDP) which can also
+    be inferred from the SIP message body if not supplied and the ports.
     """
-
     ORDER = {
         "INVITE": 0,
         "ReINVITE": 1,
@@ -558,8 +556,10 @@ class SIPCounter(object):
         :return: (string) a formated representation of self._data
         """
         output = []
+
         if data is None:
             data = self.groupby(depth=depth)
+
         if not data:
             return ""
         elif summary:
@@ -568,10 +568,12 @@ class SIPCounter(object):
         else:
             s = self.most_common(depth=depth)
             sl = 0
+
         if any(x for v in data.values() for x in v.keys() if x == self.dirBoth):
             directions = 1
         else:
             directions = 2
+
         m = s[list(s.keys())[0]]
         elements = self.elements(data=data)
         cl = max(len(str(x)) for v in m.values() for x in v.values())
@@ -653,7 +655,7 @@ class SIPCounter(object):
 
     def __contains__(self, elem):
         """Magic method to implement membership check ('in' operator)
-        :return: None"""
+        :return: (bool)"""
         elem = str(elem)
         if "." in elem or (elem.isdigit() and len(elem) > 3):
             return any(elem in x for x in self._data)
@@ -697,7 +699,7 @@ class SIPCounter(object):
 
     def __iadd__(self, other):
         """Magic method to add a SIPCounter to self._data inplace
-        :return: None"""
+        :return: SIPCounter object"""
         if type(self) != type(other):
             raise TypeError("can only add SIPCounter to a SIPCounter")
         self.update(other.data)
@@ -705,7 +707,7 @@ class SIPCounter(object):
 
     def __isub__(self, other):
         """Magic method to subtract a SIPCounter from self._data inplace
-        :return: None"""
+        :return: SIPCounter object"""
         if type(self) != type(other):
             raise TypeError("can only subtract SIPCounter from a SIPCounter")
         self.subtract(other.data)
@@ -713,35 +715,38 @@ class SIPCounter(object):
 
     def __lt__(self, other):
         """Magic method to implement < operator to compare two SIPCounters
-        :return: None"""
+        :return: (bool)"""
         return self.total < other.total
 
     def __gt__(self, other):
         """Magic method to implement > operator to compare two SIPCounters
-        :return: None"""
+        :return: (bool)"""
         return self.total > other.total
 
     def __ge__(self, other):
         """Magic method to implement >= operator to compare two SIPCounters
-        :return: None"""
+        :return: (bool)"""
         return self.total >= other.total
 
     def __le__(self, other):
         """Magic method to implement <= operator to compare two SIPCounters
-        :return: None"""
+        :return: (bool)"""
         return self.total <= other.total
 
     def __eq__(self, other):
         """Magic method to implement == operator to compare two SIPCounters
-        :return: None"""
+        :return: (bool)"""
         return self.total == other.total
 
     def __ne__(self, other):
         """Magic method to implement != operator to compare two SIPCounters
-        :return: None"""
+        :return: (bool)"""
         return self.total != other.total
 
     def __repr__(self):
+        """Magic method to return representation of SIPCounter
+        :return: (string) representation of SIPCounter
+        """
         r = (
             'name="%s"',
             "sip_filter=%s",
