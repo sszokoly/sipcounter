@@ -1,1488 +1,544 @@
+# -*- coding: utf-8 -*-
 from __future__ import print_function
-import unittest
-import uuid
-import time
-from collections import Counter, OrderedDict
-from functools import partial, reduce
+from copy import deepcopy
 from sipcounter import SIPCounter
-from random import randrange
+from collections import Counter, OrderedDict
+import unittest
+import os
 
-roledir = {"c": "IN", "s": "OUT"}
+INVITE = """
+INVITE sip:1111@example.com SIP/2.0
+From: <sip:2222@example.com>;tag=tag1234
+To: <sip:1111@example.com>
+Call-ID: aa04470a-e206-491a-8193-e79579456fea
+CSeq: 1 INVITE
+Subject: test_sipcounter
+Via: SIP/2.0/{0} host.example.com:12345;branch=branch1234
+Contact: <sip:2222@host.example.com:12345;transport=UDP>
+Content-Length: 0
+"""
 
-scenarios = {
-    "simple": (
-        ("INVITE", "c"),
-        ("100", "s"),
-        ("180", "s"),
-        ("200", "s"),
-        ("ACK", "c"),
-        ("BYE", "c"),
-        ("200", "s"),
-    ),
-    "shuffled": (
-        ("INVITE", "c"),
-        ("100", "s"),
-        ("180", "s"),
-        ("200", "s"),
-        ("ACK", "c"),
-        ("INVITE", "s"),
-        ("200", "c"),
-        ("ACK", "s"),
-        ("BYE", "c"),
-        ("200", "s"),
-    ),
-    "canceled": (
-        ("INVITE", "c"),
-        ("100", "s"),
-        ("183", "s"),
-        ("PRACK", "c"),
-        ("200", "s"),
-        ("CANCEL", "c"),
-        ("200", "s"),
-        ("487", "s"),
-        ("ACK", "c"),
-    ),
-    "transferred": (
-        ("INVITE", "c"),
-        ("100", "s"),
-        ("180", "s"),
-        ("200", "s"),
-        ("ACK", "c"),
-        ("REFER", "c"),
-        ("202", "s"),
-        ("BYE", "s"),
-        ("200", "c"),
-    ),
-    "moved": (
-        ("INVITE", "c"),
-        ("100", "s"),
-        ("302", "s"),
-        ("ACK", "c"),
-    ),
-    "auth": (
-        ("INVITE", "c"),
-        ("100", "s"),
-        ("401", "s"),
-        ("ACK", "c"),
-    ),
-    "forbidden": (
-        ("INVITE", "c"),
-        ("100", "s"),
-        ("403", "s"),
-        ("ACK", "c"),
-    ),
-    "publish": (
-        ("PUBLISH", "s"),
-        ("200", "c"),
-    ),
-    "notify": (
-        ("NOTIFY", "s"),
-        ("200", "c"),
-    ),
-    "subscribe": (
-        ("SUBSCRIBE", "c"),
-        ("202", "s"),
-    ),
-    "options": (
-        ("OPTIONS", "c"),
-        ("200", "s")
-    ),
-    "server_error": (
-        ("INVITE", "c"),
-        ("100", "s"),
-        ("500", "s"),
-        ("ACK", "c"),
-    ),
-    "global_error": (
-        ("INVITE", "c"),
-        ("100", "s"),
-        ("603", "s"),
-        ("ACK", "c"),)
-    ,
-    "client_only": (
-        ("INVITE", "c"),
-        ("INVITE", "c"),
-        ("INVITE", "c")
-    ),
-}
+ReINVITE = """
+INVITE sip:1111@example.com SIP/2.0
+f: <sip:2222@example.com>;tag=tag1234
+t: <sip:1111@example.com>;tag=54321fedcba
+i: 93793536-fe87-4dea-bc14-b925a00695a0
+CSeq: 2 INVITE
+s: test_sipcounter
+v: SIP/2.0/{0} host.example.com:5060;branch=branch1234
+m: <sip:2222@host.example.com:5060;transport=UDP>
+l: 0
+"""
 
-response_descr = {
-    "100": "Trying",
-    "180": "Ringing",
-    "183": "Session Progress",
-    "200": "OK",
-    "202": "ACCEPTED",
-    "302": "Moved Temporarily",
-    "401": "Unauthorized",
-    "403": "Forbidden",
-    "487": "Request Terminated",
-    "500": "500 Server Internal Error",
-    "603": "Decline",
-}
-
-
-def randipport():
-    """Generates random IP address and port number"""
-    first = [str(randrange(1, 255))]
-    rest = [str(randrange(0, 255)) for _ in range(4)]
-    ip = ".".join(first + rest)
-    port = str(randrange(1025, 65536))
-    return ip, port
-
-def expectations(
-    scenario,
-    client_ip="",
-    client_port="",
-    server_ip="",
-    server_port="",
-    msgdir=False,
-    proto="",
-    iterations=1,
-):
-    """Returns the expected 'data' dict of a SIPCounter for a scenario."""
-    c = SIPCounter()
-    counter, counters = {}, {}
-
-    if not server_ip:
-        server_ip = c.local
-    if not client_ip:
-        client_ip = c.remote
-    if proto is None:
-        proto = "TCP"
-    elif not proto:
-        proto = "UDP"
-    else:
-        proto = proto.upper()
-
-    key = (server_ip, client_ip, proto, server_port, client_port)
-
-    for _ in range(iterations):
-        response_seen = False
-        for msgtype, role in scenario:
-            if msgtype == "INVITE":
-                if response_seen:
-                    msgtype = "ReINVITE"
-            else:
-                response_seen = True
-            try:
-                counter[role].update([msgtype])
-            except KeyError:
-                counter[role] = Counter()
-                counter[role].update([msgtype])
-    if msgdir:
-        try:
-            counters[c.dirOut] = counter["s"]
-        except:
-            pass
-        try:
-            counters[c.dirIn] = counter["c"]
-        except:
-            pass
-    else:
-        counters[c.dirBoth] = counter["c"] + counter["s"]
-
-    return {key: counters}
-
-def merge_expectations(
-    expectation1, expectation2, subtract=False, compact=True, depth=5
-):
-    """Returns the addition/subtraction of two SIPCounter 'data' dict."""
-    merged = {}
-
-    for k, v in expectation1.items():
-        for d, c in v.items():
-            merged.setdefault(k[:depth], {}).setdefault(d, Counter()).update(c)
-
-    if not subtract:
-        for k, v in expectation2.items():
-            for d, c in v.items():
-                merged.setdefault(k[:depth], {}).setdefault(d, Counter()).update(c)
-        return merged
-
-    for k, v in expectation2.items():
-        if k[:depth] not in merged:
-            continue
-        for d, c in v.items():
-            if d in merged[k[:depth]]:
-                merged[k[:depth]][d].subtract(c)
-
-    if compact:
-        compacted = {}
-        for k, v in merged.items():
-            for k2, v2 in v.items():
-                for k3, v3 in v2.items():
-                    if v3 > 0:
-                        (
-                            compacted.setdefault(k[:depth], {})
-                            .setdefault(k2, Counter())
-                            .update({k3: v3})
-                        )
-        return compacted
-
-    return merged
-
-
-def sip_generator(
-    scenarios=scenarios,
-    response_descr=response_descr,
-    scenario_iterations=None,
-    client_ip="",
-    client_port="",
-    server_ip="",
-    server_port="",
-    proto="",
-    initdir="IN",
-    compact=False,
-    bad=False,
-    sleep=0,
-    leadinglines="",
-    callee="1111",
-    caller="2222",
-):
-    """Returns a SIP message generator for a scenario from scenarios."""
-    req_uri = "{leadinglines}{method} sip:{callee}@example.com SIP/2.0"
-    resp_status = "{leadinglines}SIP/2.0 {status}"
-
-    template_long = """
-        From: <sip:2222@example.com>;tag=tag1234
-        To: <sip:{callee}@example.com>{to_tag}
-        Call-ID: {callid}
-        CSeq: {cseq} {method}
-        Subject: test_sipcounter
-        Via: SIP/2.0/{proto} {sender_ip}:{sender_port};branch=branch1234
-        Contact: <sip:{caller}@{sender_ip}:{sender_port};transport={proto}>
-        Content-Length: 0
-        """
-
-    template_comp = """
-        f: <sip:2222@example.com>;tag=tag1234
-        t: <sip:{callee}@example.com>{to_tag}
-        i: {callid}
-        CSeq: {cseq} {method}
-        s: test_sipcounter
-        v: SIP/2.0/{proto} {sender_ip}:{sender_port};branch=branch1234
-        m: <sip:{caller}@{sender_ip}:{sender_port};transport={proto}>
-        l: 0
-        """
-
-    template_bad = """
-        From: <sip:2222@example.com>;tag=tag1234
-        To: <sip:{callee}@example.com>{to_tag}
-        Call-ID: {callid}
-        CSeq: {cseq}
-        Subject: test_sipcounter
-        Via: SIP/2.0/{proto} {sender_ip}:{sender_port};branch=branch1234
-        Contact: <sip:{caller}@{sender_ip}:{sender_port};transport={proto}>
-        Content-Length: 0
-        """
-
-    builtin_scenarios = {
-        "test": (("INVITE", "c"), ("100", "s"), ("404", "s"), ("ACK", "c"))
-    }
-
-    builtin_response_descr = {"100": "Trying", "401": "Not Found"}
-
-    if not isinstance(scenarios, dict):
-        scenarios = builtin_scenarios
-
-    if not isinstance(response_descr, dict):
-        response_descr = builtin_response_descr
-
-    if scenario_iterations is None:
-        scenario_iterations = dict((k, 1) for k in scenarios.keys())
-
-    if compact:
-        template = "\n".join(x.strip() for x in template_comp.split("\n") if x)
-    elif bad:
-        template = "\n".join(x.strip() for x in template_bad.split("\n") if x)
-    else:
-        template = "\n".join(x.strip() for x in template_long.split("\n") if x)
-
-    for scenario, iterations in scenario_iterations.items():
-        cseq = randrange(1000)
-
-        for _ in range(iterations):
-            roledir, to_tag = None, ""
-
-            for msgtype, role in scenarios[scenario]:
-                if roledir is None:
-                    other_role = (set(["c", "s"]) - set([role])).pop()
-                    other_dir = (set(["IN", "OUT"]) - set([initdir])).pop()
-                    roledir = {role: initdir, other_role: other_dir}
-
-                if msgtype.isdigit():
-                    firstline = resp_status
-                    status = " ".join((msgtype, response_descr.get(msgtype, "")))
-                    if int(msgtype) > 100 and not to_tag:
-                        to_tag = ";tag=54321fedcba"
-                else:
-                    firstline = req_uri
-                    method = msgtype
-                    status = ""
-                    if msgtype != "ACK":
-                        cseq += 1
-
-                if role == "s":
-                    sender_ip = server_ip
-                    sender_port = server_port
-                    receiver_ip = client_ip
-                    receiver_port = client_port
-                else:
-                    sender_ip = client_ip
-                    sender_port = client_port
-                    receiver_ip = server_ip
-                    receiver_port = server_port
-
-                msgdir = roledir[role]
-                placeholders = {
-                    "caller": caller,
-                    "callee": callee,
-                    "leadinglines": leadinglines,
-                    "method": method,
-                    "status": status,
-                    "sender_ip": sender_ip or "10.1.1.1",
-                    "sender_port": sender_port or "65535",
-                    "callid": uuid.uuid4(),
-                    "to_tag": to_tag,
-                    "proto": proto or "UDP",
-                    "cseq": cseq,
-                }
-
-                timestamp = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-                sipmsg = "\n".join((firstline, template)).format(**placeholders)
-                yield (
-                    timestamp,
-                    sipmsg,
-                    msgdir,
-                    sender_ip,
-                    sender_port,
-                    receiver_ip,
-                    receiver_port,
-                    proto,
-                )
-                time.sleep(sleep)
+OK = """
+SIP/2.0 200 OK
+From: <sip:2222@example.com>;tag=tag1234
+To: <sip:1111@example.com>;tag=54321fedcba
+Call-ID: 8fda1320-20e4-4d1d-a1ae-d90249b1310b
+CSeq: 1 PUBLISH
+Subject: test_sipcounter
+Via: SIP/2.0/{0} host.example.com:12345;branch=branch1234
+Contact: <sip:2222@host.example.com:12345;transport=UDP>
+Content-Length: 0
+"""
 
 
 class TestBidir(unittest.TestCase):
-    """Test SIPCounter object"""
+    """Test SIPCounter object with direction and host awareness."""
 
     @classmethod
-    def setupClass(cls):
+    def setUpClass(cls):
+        cls.dirIn = SIPCounter().dirIn
+        cls.dirOut = SIPCounter().dirOut
+        cls.dirBoth = SIPCounter().dirBoth
+        cls.csvfile = "test_bidir_tocsv.csv"
+
+    @classmethod
+    def tearDownClass(cls):
         pass
 
-    def test_create_counter_with_default_values(self):
-        c1 = SIPCounter()
-        self.assertEqual(c1.name, "")
-        self.assertEqual(c1.sip_filter, set([".*"]))
-        self.assertEqual(c1.host_filter, set())
-        self.assertEqual(c1.known_servers, set())
-        self.assertEqual(c1.known_ports, set(["5061", "5060"]))
-        self.assertEqual(c1.data, {})
-
-    def test_create_counter_with_none_default_values(self):
-        sip_filter = ["INVITE", "200"]
-        host_filter = ["10.0.0.2"]
-        known_servers = ["10.0.0.1"]
-        known_ports = ["5070"]
-        name = "c1"
-        link = ("10.0.0.1", "10.0.0.2", "UDP", "5070", "6333")
-        counter = Counter({"INVITE": 1, "200": 1})
-        data = {link: {SIPCounter().dirBoth: counter}}
-
-        c1 = SIPCounter(
-            sip_filter=sip_filter,
-            host_filter=host_filter,
-            known_servers=known_servers,
-            known_ports=known_ports,
-            name=name,
-            data=data,
-        )
-
-        self.assertEqual(c1.sip_filter, set(sip_filter))
-        self.assertEqual(c1.host_filter, set(host_filter))
-        self.assertEqual(c1.known_servers, set(known_servers))
-        self.assertEqual(c1.known_ports, set(known_ports) | set(["5061", "5060"]))
-        self.assertEqual(c1.name, name)
-        self.assertEqual(c1.data, data)
-
-    def test_add_sipmsg_without_msgdir_proto_ip_address_port(self):
-        iterations = 1
-        scenario_name = "simple"
-
-        c = SIPCounter()
-        scenario = scenarios[scenario_name]
-        initdir = roledir[scenario[0][1]]
-        expected = expectations(scenario, iterations=iterations, msgdir=False)
-        sipgen = sip_generator(
-            scenario_iterations={scenario_name: iterations}, initdir=initdir
-        )
-        for _, sipmsg, _, _, _, _, _, _ in sipgen:
-            c.add(sipmsg)
-
-        self.assertEqual(c.data, expected)
-
-    def test_add_sipmsg_with_msgdir_without_ipaddr_port_proto(self):
-        iterations = 1
-        scenario_name = "simple"
-
-        c = SIPCounter()
-        scenario = scenarios[scenario_name]
-        initdir = roledir[scenario[0][1]]
-        expected = expectations(scenario, iterations=iterations, msgdir=True)
-        sipgen = sip_generator(
-            scenario_iterations={scenario_name: iterations}, initdir=initdir
-        )
-        for _, sipmsg, msgdir, _, _, _, _, _ in sipgen:
-            c.add(sipmsg, msgdir)
-
-        self.assertEqual(c._data, expected)
-
-    def test_add_sipmsg_with_msgdir_from_client_only(self):
-        iterations = 1
-        scenario_name = "client_only"
-
-        c = SIPCounter()
-        scenario = scenarios[scenario_name]
-        initdir = roledir[scenario[0][1]]
-        expected = expectations(scenario, iterations=iterations, msgdir=True)
-        sipgen = sip_generator(
-            scenario_iterations={scenario_name: iterations}, initdir=initdir
-        )
-        for _, sipmsg, msgdir, _, _, _, _, _ in sipgen:
-            c.add(sipmsg, msgdir)
-
-        self.assertEqual(c.data, expected)
-
-    def test_add_sipmsg_with_msgdir_ipaddr_without_proto(self):
-        iterations = 1
-        scenario_name = "simple"
-
-        c = SIPCounter()
-        scenario = scenarios[scenario_name]
-        initdir = roledir[scenario[0][1]]
-        client_ip, client_port = randipport()
-        server_ip, server_port = "10.0.0.1", "5060"
-        expected = expectations(
-            scenario,
-            iterations=iterations,
-            msgdir=True,
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-        )
-        sipgen = sip_generator(
-            scenario_iterations={scenario_name: iterations},
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-            initdir=initdir,
-        )
-        for _, sipmsg, msgdir, srcip, srcport, dstip, dstport, _ in sipgen:
-            c.add(sipmsg, msgdir, srcip, srcport, dstip, dstport)
-
-        self.assertEqual(c.data, expected)
-
-    def test_add_sipmsg_with_msgdir_ipaddr_port_implicit_proto(self):
-        iterations = 1
-        scenario_name = "simple"
-        proto = "TLS"
-
-        c = SIPCounter()
-        scenario = scenarios[scenario_name]
-        initdir = roledir[scenario[0][1]]
-        client_ip, client_port = randipport()
-        server_ip, server_port = "10.0.0.1", "5060"
-        expected = expectations(
-            scenario,
-            iterations=iterations,
-            msgdir=True,
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-            proto=proto,
-        )
-        sipgen = sip_generator(
-            scenario_iterations={scenario_name: iterations},
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-            initdir=initdir,
-            proto=proto,
-        )
-        for _, sipmsg, msgdir, srcip, srcport, dstip, dstport, _ in sipgen:
-            c.add(sipmsg, msgdir, srcip, srcport, dstip, dstport)
-
-        self.assertEqual(c.data, expected)
-
-    def test_add_compact_sipmsg_with_msgdir_ipaddr_port_implicit_proto(self):
-        iterations = 1
-        scenario_name = "simple"
-        proto = "TLS"
-
-        c = SIPCounter()
-        scenario = scenarios[scenario_name]
-        initdir = roledir[scenario[0][1]]
-        client_ip, client_port = randipport()
-        server_ip, server_port = "10.0.0.1", "5060"
-        expected = expectations(
-            scenario,
-            iterations=iterations,
-            msgdir=True,
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-            proto=proto,
-        )
-        sipgen = sip_generator(
-            scenario_iterations={scenario_name: iterations},
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-            initdir=initdir,
-            proto=proto,
-            compact=True,
-        )
-        for _, sipmsg, msgdir, srcip, srcport, dstip, dstport, _ in sipgen:
-            c.add(sipmsg, msgdir, srcip, srcport, dstip, dstport)
-
-        self.assertEqual(c.data, expected)
-
-    def test_add_sipmsg_with_msgdir_ipaddr_port_explicit_proto(self):
-        iterations = 1
-        scenario_name = "simple"
-        proto = "TLS"
-
-        c = SIPCounter()
-        scenario = scenarios[scenario_name]
-        initdir = roledir[scenario[0][1]]
-        client_ip, client_port = randipport()
-        server_ip, server_port = "10.0.0.1", "5060"
-        expected = expectations(
-            scenario,
-            iterations=iterations,
-            msgdir=True,
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-            proto=proto,
-        )
-        sipgen = sip_generator(
-            scenario_iterations={scenario_name: iterations},
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-            initdir=initdir,
-            proto=proto,
-        )
-        for _, sipmsg, msgdir, srcip, srcport, dstip, dstport, proto in sipgen:
-            c.add(sipmsg, msgdir, srcip, srcport, dstip, dstport)
-
-        self.assertEqual(c.data, expected)
-
-    def test_add_sipmsg_with_ipaddr_port_witout_msgdir_for_known_servers(self):
-        iterations = 1
-        scenario_name = "simple"
-        proto = "TLS"
-        known_servers = ["10.0.0.2"]
-
-        c = SIPCounter(known_servers=known_servers)
-        scenario = scenarios[scenario_name]
-        initdir = roledir[scenario[0][1]]
-        client_ip, client_port = "10.0.0.1", "12345"
-        server_ip, server_port = "10.0.0.2", "5060"
-        expected = expectations(
-            scenario,
-            iterations=iterations,
-            msgdir=True,
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-            proto=proto,
-        )
-        sipgen = sip_generator(
-            scenario_iterations={scenario_name: iterations},
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-            initdir=initdir,
-            proto=proto,
-        )
-        for _, sipmsg, _, srcip, srcport, dstip, dstport, _ in sipgen:
-            c.add(sipmsg, None, srcip, srcport, dstip, dstport)
-
-        self.assertEqual(c.data, expected)
-
-    def test_add_sipmsg_with_ipaddr_port_witout_msgdir_for_known_ports(self):
-        iterations = 1
-        scenario_name = "simple"
-        proto = "TLS"
-        known_ports = ["5070"]
-
-        c = SIPCounter(known_ports=known_ports)
-        scenario = scenarios[scenario_name]
-        initdir = roledir[scenario[0][1]]
-        client_ip, client_port = "10.0.0.1", "1234"
-        server_ip, server_port = "10.0.0.2", "5070"
-        expected = expectations(
-            scenario,
-            iterations=iterations,
-            msgdir=True,
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-            proto=proto,
-        )
-        sipgen = sip_generator(
-            scenario_iterations={scenario_name: iterations},
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-            initdir=initdir,
-            proto=proto,
-        )
-        for _, sipmsg, _, srcip, srcport, dstip, dstport, _ in sipgen:
-            c.add(sipmsg, None, srcip, srcport, dstip, dstport)
-
-        self.assertEqual(c.data, expected)
-
-    def test_add_sipmsg_without_cseq_method(self):
-        iterations = 1
-        scenario_name = "options"
-        proto = "TLS"
-        sip_filter = ["OPTIONS"]
-
-        c = SIPCounter(sip_filter=sip_filter)
-        scenario = scenarios[scenario_name]
-        initdir = roledir[scenario[0][1]]
-        client_ip, client_port = "10.0.0.2", "12345"
-        server_ip, server_port = "10.0.0.1", "5060"
-        expected = expectations(
-            scenario,
-            iterations=iterations,
-            msgdir=True,
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-            proto=proto,
-        )
-        sipgen = sip_generator(
-            scenario_iterations={scenario_name: iterations},
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-            initdir=initdir,
-            proto=proto,
-            bad=True,
-            leadinglines="\n\n\n\r",
-        )
-        for _, sipmsg, msgdir, srcip, srcport, dstip, dstport, proto in sipgen:
-            c.add(sipmsg, msgdir, srcip, srcport, dstip, dstport, proto)
-
-        expected_without_resp = {}
-        for k, v in expected.items():
-            for k2, v2 in v.items():
-                for k3, v3 in v2.items():
-                    if not k3.isdigit():
-                        (
-                            expected_without_resp.setdefault(k, {})
-                            .setdefault(k2, Counter())
-                            .update({k3: v3})
-                        )
-
-        self.assertEqual(c.data, expected_without_resp)
-
-    def test_update_c_with_c_should_return_k_which_is_2c(self):
-        iterations = 1
-        scenario_name = "shuffled"
-
-        c = SIPCounter()
-        k = SIPCounter()
-        scenario = scenarios[scenario_name]
-        initdir = roledir[scenario[0][1]]
-        expected = expectations(scenario, iterations=iterations, msgdir=False)
-        sipgen = sip_generator(
-            scenario_iterations={scenario_name: iterations}, initdir=initdir
-        )
-        for _, sipmsg, _, _, _, _, _, _ in sipgen:
-            c.add(sipmsg)
-
-        iterations = 2
-        sipgen = sip_generator(
-            scenario_iterations={scenario_name: iterations}, initdir=initdir
-        )
-        for _, sipmsg, _, _, _, _, _, _ in sipgen:
-            k.add(sipmsg)
-
-        c.update(expected)
-        self.assertEqual(c.data, k.data)
-
-    def test_subtract_k_which_is_c_from_2c_should_return_c(self):
-        iterations = 1
-        scenario_name = "shuffled"
-
-        c = SIPCounter()
-        k = SIPCounter()
-        scenario = scenarios[scenario_name]
-        initdir = roledir[scenario[0][1]]
-        expected = expectations(scenario, iterations=iterations, msgdir=False)
-        sipgen = sip_generator(
-            scenario_iterations={scenario_name: iterations}, initdir=initdir
-        )
-        for _, sipmsg, _, _, _, _, _, _ in sipgen:
-            k.add(sipmsg)
-
-        iterations = 2
-        expected = expectations(scenario, iterations=iterations, msgdir=False)
-        sipgen = sip_generator(
-            scenario_iterations={scenario_name: iterations}, initdir=initdir
-        )
-        for _, sipmsg, _, _, _, _, _, _ in sipgen:
-            c.add(sipmsg)
-
-        c.subtract(k)
-        self.assertEqual(c._data, expected)
-
-    def test_clear(self):
-        iterations = 1
-        scenario_name = "client_only"
-        proto = "TCP"
-
-        client_ip, client_port = randipport()
-        server_ip, server_port = "10.0.0.1", "5060"
-
-        scenario = scenarios[scenario_name]
-        initdir = roledir[scenario[0][1]]
-        sip_filter = sip_filter = set([x[0] for x in scenario])
-        host_filter = set([client_ip])
-        known_servers = set([server_ip])
-        known_ports = set([server_port])
-        name = "c"
-        initdir = roledir[scenarios[scenario_name][0][1]]
-        c = SIPCounter(
-            sip_filter=sip_filter,
-            host_filter=host_filter,
-            known_servers=known_servers,
-            known_ports=known_ports,
-            name=name,
-        )
-
-        sipgen = sip_generator(
-            scenario_iterations={scenario_name: iterations},
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-            initdir=initdir,
-            proto=proto,
-        )
-        for _, sipmsg, msgdir, srcip, srcport, dstip, dstport, proto in sipgen:
-            c.add(sipmsg, msgdir, srcip, srcport, dstip, dstport, proto)
-
-        c.clear()
-
-        self.assertEqual(c._data, {})
-        self.assertEqual(c.sip_filter, sip_filter)
-        self.assertEqual(c.host_filter, host_filter)
-        self.assertEqual(c.known_servers, known_servers)
-        self.assertEqual(c.known_ports, (known_ports | set(["5060", "5061"])))
-        self.assertEqual(c.name, name)
-
-    def test__add__magic_method(self):
-        iterations = 1
-        proto = "TCP"
-
-        scenario_name = "publish"
-        client_ip, client_port = randipport()
-        server_ip, server_port = "10.0.0.1", "5070"
-
-        scenario = scenarios[scenario_name]
-        initdir = roledir[scenario[0][1]]
-        sip_filter = set([x[0] for x in scenario])
-        host_filter = set([client_ip])
-        known_servers = set([server_ip])
-        known_ports = set([server_port])
-        name = "c"
-
-        c = SIPCounter(
-            sip_filter=sip_filter,
-            host_filter=host_filter,
-            known_servers=known_servers,
-            known_ports=known_ports,
-            name=name,
-        )
-        expected1 = expectations(
-            scenario,
-            iterations=iterations,
-            msgdir=True,
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-            proto=proto,
-        )
-        sipgen = sip_generator(
-            scenario_iterations={scenario_name: iterations},
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-            initdir=initdir,
-            proto=proto,
-        )
-        for _, sipmsg, msgdir, srcip, srcport, dstip, dstport, _ in sipgen:
-            c.add(sipmsg, msgdir, srcip, srcport, dstip, dstport)
-
-        scenario_name = "notify"
-        client_ip, client_port = randipport()
-        server_ip, server_port = "10.0.0.1", "5070"
-
-        scenario = scenarios[scenario_name]
-        initdir = roledir[scenario[0][1]]
-        sip_filter2 = set([x[0] for x in scenario])
-        host_filter2 = set([client_ip])
-        known_servers2 = set([server_ip])
-        known_ports2 = set([server_port])
-        name2 = "k"
-
-        k = SIPCounter(
-            sip_filter=sip_filter2,
-            host_filter=host_filter2,
-            known_servers=known_servers2,
-            known_ports=known_ports2,
-            name=name2,
-        )
-        expected2 = expectations(
-            scenario,
-            iterations=iterations,
-            msgdir=True,
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-            proto=proto,
-        )
-        sipgen = sip_generator(
-            scenario_iterations={scenario_name: iterations},
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-            initdir=initdir,
-            proto=proto,
-        )
-        for _, sipmsg, msgdir, srcip, srcport, dstip, dstport, proto in sipgen:
-            k.add(sipmsg, msgdir, srcip, srcport, dstip, dstport)
-
-        expected = merge_expectations(expected1, expected2)
-        s = c + k
-
-        self.assertEqual(s.data, expected)
-        self.assertEqual(s.sip_filter, c.sip_filter)
-        self.assertEqual(s.host_filter, c.host_filter)
-        self.assertEqual(s.known_servers, c.known_servers)
-        self.assertEqual(s.known_ports, c.known_ports | set(["5060", "5061"]))
-        self.assertEqual(s.name, c.name)
-
-    def test__iadd__magic_method(self):
-        iterations = 1
-        proto = "TCP"
-
-        scenario_name = "publish"
-        client_ip, client_port = randipport()
-        server_ip, server_port = "10.0.0.1", "5070"
-
-        scenario = scenarios[scenario_name]
-        initdir = roledir[scenario[0][1]]
-        sip_filter = set([x[0] for x in scenario])
-        host_filter = set([client_ip])
-        known_servers = set([server_ip])
-        known_ports = set([server_port])
-        name = "c"
-
-        c = SIPCounter(
-            sip_filter=sip_filter,
-            host_filter=host_filter,
-            known_servers=known_servers,
-            known_ports=known_ports,
-            name=name,
-        )
-        expected1 = expectations(
-            scenario,
-            iterations=iterations,
-            msgdir=True,
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-            proto=proto,
-        )
-        sipgen = sip_generator(
-            scenario_iterations={scenario_name: iterations},
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-            initdir=initdir,
-            proto=proto,
-        )
-        for _, sipmsg, msgdir, srcip, srcport, dstip, dstport, _ in sipgen:
-            c.add(sipmsg, msgdir, srcip, srcport, dstip, dstport)
-
-        scenario_name = "notify"
-        client_ip, client_port = randipport()
-        server_ip, server_port = "10.0.0.1", "5070"
-
-        scenario = scenarios[scenario_name]
-        initdir = roledir[scenario[0][1]]
-        sip_filter2 = set([x[0] for x in scenario])
-        host_filter2 = set([client_ip])
-        known_servers2 = set([server_ip])
-        known_ports2 = set([server_port])
-        name2 = "k"
-
-        k = SIPCounter(
-            sip_filter=sip_filter2,
-            host_filter=host_filter2,
-            known_servers=known_servers2,
-            known_ports=known_ports2,
-            name=name2,
-        )
-        expected2 = expectations(
-            scenario,
-            iterations=iterations,
-            msgdir=True,
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-            proto=proto,
-        )
-        sipgen = sip_generator(
-            scenario_iterations={scenario_name: iterations},
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-            initdir=initdir,
-            proto=proto,
-        )
-        for _, sipmsg, msgdir, srcip, srcport, dstip, dstport, proto in sipgen:
-            k.add(sipmsg, msgdir, srcip, srcport, dstip, dstport)
-
-        expected = merge_expectations(expected1, expected2)
-        c += k
-
-        self.assertEqual(c.data, expected)
-        self.assertEqual(c.sip_filter, sip_filter)
-        self.assertEqual(c.host_filter, host_filter)
-        self.assertEqual(c.known_servers, known_servers)
-        self.assertEqual(c.known_ports, known_ports | set(["5060", "5061"]))
-        self.assertEqual(c.name, name)
-
-    def test__sub__magic_method_c_subtract_c_result_empty_data(self):
-        iterations = 1
-        proto = "TCP"
-
-        scenario_name = "publish"
-        client_ip, client_port = randipport()
-        server_ip, server_port = "10.0.0.1", "5070"
-
-        scenario = scenarios[scenario_name]
-        initdir = roledir[scenario[0][1]]
-        sip_filter = set([x[0] for x in scenario])
-        host_filter = set([client_ip])
-        known_servers = set([server_ip])
-        known_ports = set([server_port])
-        name = "c"
-
-        c = SIPCounter(
-            sip_filter=sip_filter,
-            host_filter=host_filter,
-            known_servers=known_servers,
-            known_ports=known_ports,
-            name=name,
-        )
-        expected1 = expectations(
-            scenario,
-            iterations=iterations,
-            msgdir=True,
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-            proto=proto,
-        )
-        sipgen = sip_generator(
-            scenario_iterations={scenario_name: iterations},
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-            initdir=initdir,
-            proto=proto,
-        )
-        for _, sipmsg, msgdir, srcip, srcport, dstip, dstport, _ in sipgen:
-            c.add(sipmsg, msgdir, srcip, srcport, dstip, dstport)
-
-        k = c
-        k.name = "k"
-        expected2 = expected1
-
-        expected = merge_expectations(expected1, expected2, subtract=True)
-        s = c - k
-
-        self.assertEqual(s.data, expected)
-        self.assertEqual(s.sip_filter, c.sip_filter)
-        self.assertEqual(s.host_filter, c.host_filter)
-        self.assertEqual(s.known_servers, c.known_servers)
-        self.assertEqual(s.known_ports, c.known_ports)
-        self.assertEqual(s.name, c.name)
-
-    def test__isub__magic_method_same_link_diff_scenario_return_not_empty(self):
-        iterations = 1
-        proto = "TCP"
-
-        scenario_name = "publish"
-        client_ip, client_port = randipport()
-        server_ip, server_port = "10.0.0.1", "5070"
-
-        scenario = scenarios[scenario_name]
-        initdir = roledir[scenario[0][1]]
-        sip_filter = set([x[0] for x in scenario])
-        host_filter = set([client_ip])
-        known_servers = set([server_ip])
-        known_ports = set([server_port])
-        name = "c"
-
-        c = SIPCounter(
-            sip_filter=sip_filter,
-            host_filter=host_filter,
-            known_servers=known_servers,
-            known_ports=known_ports,
-            name=name,
-        )
-        expected1 = expectations(
-            scenario,
-            iterations=iterations,
-            msgdir=True,
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-            proto=proto,
-        )
-        sipgen = sip_generator(
-            scenario_iterations={scenario_name: iterations},
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-            initdir=initdir,
-            proto=proto,
-        )
-        for _, sipmsg, msgdir, srcip, srcport, dstip, dstport, _ in sipgen:
-            c.add(sipmsg, msgdir, srcip, srcport, dstip, dstport)
-
-        scenario_name = "notify"
-
-        scenario = scenarios[scenario_name]
-        initdir = roledir[scenario[0][1]]
-        sip_filter2 = set([x[0] for x in scenario])
-        host_filter2 = set([client_ip])
-        known_servers2 = set([server_ip])
-        known_ports2 = set([server_port])
-        name2 = "k"
-
-        k = SIPCounter(
-            sip_filter=sip_filter2,
-            host_filter=host_filter2,
-            known_servers=known_servers2,
-            known_ports=known_ports2,
-            name=name2,
-        )
-        expected2 = expectations(
-            scenario,
-            iterations=iterations,
-            msgdir=True,
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-            proto=proto,
-        )
-        sipgen = sip_generator(
-            scenario_iterations={scenario_name: iterations},
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-            initdir=initdir,
-            proto=proto,
-        )
-        for _, sipmsg, msgdir, srcip, srcport, dstip, dstport, proto in sipgen:
-            k.add(sipmsg, msgdir, srcip, srcport, dstip, dstport)
-
-        expected = merge_expectations(expected1, expected2, subtract=True)
-        c -= k
-
-        self.assertEqual(c.data, expected)
-        self.assertEqual(c.sip_filter, sip_filter)
-        self.assertEqual(c.host_filter, host_filter)
-        self.assertEqual(c.known_servers, known_servers)
-        self.assertEqual(c.known_ports, known_ports | set(["5060", "5061"]))
-        self.assertEqual(c.name, name)
-
-    def test_contains_ipaddr_port_or_sip_msgtype(self):
-        iterations = 1
-        proto = "TCP"
-
-        scenario_name = "transferred"
-        client_ip, client_port = "10.0.0.2", "1234"
-        server_ip, server_port = "10.0.0.1", "5070"
-
-        scenario = scenarios[scenario_name]
-        initdir = roledir[scenario[0][1]]
-        sip_filter = set([x[0] for x in scenario])
-        host_filter = set([client_ip])
-        known_servers = set([server_ip])
-        known_ports = set([server_port])
-        name = "c"
-
-        c = SIPCounter(
-            sip_filter=sip_filter,
-            host_filter=host_filter,
-            known_servers=known_servers,
-            known_ports=known_ports,
-            name=name,
-        )
-        sipgen = sip_generator(
-            scenario_iterations={scenario_name: iterations},
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-            initdir=initdir,
-            proto=proto,
-        )
-        for _, sipmsg, msgdir, srcip, srcport, dstip, dstport, _ in sipgen:
-            c.add(sipmsg, msgdir, srcip, srcport, dstip, dstport)
-
-        self.assertTrue(client_ip in c)
-        self.assertTrue(server_port in c)
-        self.assertTrue("REFER" in c)
-        self.assertFalse("2345" in c)
-        self.assertFalse("10.0.0.3" in c)
-        self.assertFalse("MESSAGE" in c)
-
-    def test_total(self):
-        iterations = 10
-        proto = "TLS"
-
-        scenario_name = "canceled"
-        client_ip, client_port = randipport()
-        server_ip, server_port = "10.0.0.1", "5070"
-
-        scenario = scenarios[scenario_name]
-        initdir = roledir[scenario[0][1]]
-        sip_filter = set([x[0] for x in scenario])
-        host_filter = set([client_ip])
-        known_servers = set([server_ip])
-        known_ports = set([server_port])
-        name = "c"
-
-        c = SIPCounter(
-            sip_filter=sip_filter,
-            host_filter=host_filter,
-            known_servers=known_servers,
-            known_ports=known_ports,
-            name=name,
-        )
-        expected = len(scenario) * iterations
-        sipgen = sip_generator(
-            scenario_iterations={scenario_name: iterations},
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-            initdir=initdir,
-            proto=proto,
-        )
-        for _, sipmsg, msgdir, srcip, srcport, dstip, dstport, _ in sipgen:
-            c.add(sipmsg, msgdir, srcip, srcport, dstip, dstport)
-
-        self.assertEqual(c.total, expected)
-
-    def test__lt__gt__ne__le__ge__magic_methods(self):
-        iterations = 1
-        proto = "TLS"
-
-        scenario_name = "simple"
-        client_ip, client_port = randipport()
-        server_ip, server_port = "10.0.0.1", "5070"
-
-        scenario = scenarios[scenario_name]
-        initdir = roledir[scenario[0][1]]
-        sip_filter = set([x[0] for x in scenario])
-        host_filter = set([client_ip])
-        known_servers = set([server_ip])
-        known_ports = set([server_port])
-
-        c = SIPCounter(
-            sip_filter=sip_filter,
-            host_filter=host_filter,
-            known_servers=known_servers,
-            known_ports=known_ports,
-        )
-        sipgen = sip_generator(
-            scenario_iterations={scenario_name: iterations},
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-            initdir=initdir,
-            proto=proto,
-        )
-        for _, sipmsg, msgdir, srcip, srcport, dstip, dstport, _ in sipgen:
-            c.add(sipmsg, msgdir, srcip, srcport, dstip, dstport)
-
-        iterations = 2
-        k = SIPCounter(
-            sip_filter=sip_filter,
-            host_filter=host_filter,
-            known_servers=known_servers,
-            known_ports=known_ports,
-        )
-        sipgen = sip_generator(
-            scenario_iterations={scenario_name: iterations},
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-            initdir=initdir,
-            proto=proto,
-        )
-        for _, sipmsg, msgdir, srcip, srcport, dstip, dstport, _ in sipgen:
-            k.add(sipmsg, msgdir, srcip, srcport, dstip, dstport)
-
-        self.assertTrue(c < k)
-        self.assertTrue(k > c)
-        self.assertTrue(k != c)
-        self.assertTrue(c <= c)
-        self.assertTrue(k >= k)
-
-    def test_elements(self):
-        iterations = 1
-        proto = "TCP"
-
-        scenario_name = "shuffled"
-        client_ip, client_port = "10.0.0.2", "1234"
-        server_ip, server_port = "10.0.0.1", "5070"
-
-        scenario = scenarios[scenario_name]
-        initdir = roledir[scenario[0][1]]
-        sip_filter = set([x[0] for x in scenario])
-        host_filter = set([client_ip])
-        known_servers = set([server_ip])
-        known_ports = set([server_port])
-        name = "c"
-
-        c = SIPCounter(
-            sip_filter=sip_filter,
-            host_filter=host_filter,
-            known_servers=known_servers,
-            known_ports=known_ports,
-            name=name,
-        )
-        expected = set(x[0] for x in scenario)
-        sipgen = sip_generator(
-            scenario_iterations={scenario_name: iterations},
-            client_ip=client_ip,
-            client_port=client_port,
-            server_ip=server_ip,
-            server_port=server_port,
-            initdir=initdir,
-            proto=proto,
-        )
-        for _, sipmsg, msgdir, srcip, srcport, dstip, dstport, _ in sipgen:
-            c.add(sipmsg, msgdir, srcip, srcport, dstip, dstport)
-
-        self.assertEqual(set(c.elements()), expected)
-
-    def test_summary(self):
-        iterations = 1
-        proto = "UDP"
-        test_scenarios = ["canceled", "transferred", "global_error", "moved"]
-        server_ip, server_port = "10.0.0.1", "5070"
-
-        known_servers = set([server_ip])
-        known_ports = set([server_port])
-        c = SIPCounter(known_servers=known_servers, known_ports=known_ports)
-        expecteds = []
-
-        for scenario_name in test_scenarios:
-            scenario = scenarios[scenario_name]
-            initdir = roledir[scenario[0][1]]
-            client_ip, client_port = randipport()
-
-            expected = expectations(
-                scenario,
-                iterations=iterations,
-                client_ip=client_ip,
-                client_port=client_port,
-                server_ip=server_ip,
-                server_port=server_port,
-                proto=proto,
-                msgdir=True,
-            )
-            expecteds.append(expected)
-
-            sipgen = sip_generator(
-                scenario_iterations={scenario_name: iterations},
-                client_ip=client_ip,
-                client_port=client_port,
-                server_ip=server_ip,
-                server_port=server_port,
-                initdir=initdir,
-                proto=proto,
-            )
-            for _, sipmsg, msgdir, srcip, srcport, dstip, dstport, _ in sipgen:
-                c.add(sipmsg, msgdir, srcip, srcport, dstip, dstport)
-
-        expected = {("SUMMARY",): {}}
-        for e in expecteds:
-            for v in e.values():
-                for msgdir, counter in v.items():
-                    expected[("SUMMARY",)].setdefault(msgdir, Counter()).update(counter)
-
-        self.assertEqual(c.summary(), expected)
-
-    def test_most_common(self):
-        iterations = 1
-        proto = "UDP"
-        depth = 3
-        n = 2
-
-        test_scenarios = ["simple", "shuffled", "transferred"]
-        server_ip, server_port = "10.0.0.1", "5070"
-
-        known_servers = set([server_ip])
-        known_ports = set([server_port])
-        c = SIPCounter(known_servers=known_servers, known_ports=known_ports)
-        expecteds = {}
-
-        for scenario_name in test_scenarios:
-            scenario = scenarios[scenario_name]
-            initdir = roledir[scenario[0][1]]
-            client_ip, client_port = randipport()
-
-            expected = expectations(
-                scenario,
-                iterations=iterations,
-                client_ip=client_ip,
-                client_port=client_port,
-                server_ip=server_ip,
-                server_port=server_port,
-                proto=proto,
-                msgdir=True,
-            )
-            expecteds[scenario_name] = expected
-
-            sipgen = sip_generator(
-                scenario_iterations={scenario_name: iterations},
-                client_ip=client_ip,
-                client_port=client_port,
-                server_ip=server_ip,
-                server_port=server_port,
-                initdir=initdir,
-                proto=proto,
-            )
-            for _, sipmsg, msgdir, srcip, srcport, dstip, dstport, _ in sipgen:
-                c.add(sipmsg, msgdir, srcip, srcport, dstip, dstport)
-
-        scenario_names_by_msgcount = sorted(
-            test_scenarios, reverse=True, key=lambda x: len(scenarios[x])
-        )
-        expected = OrderedDict()
-        for scenario_name in scenario_names_by_msgcount[:n]:
-            for k, v in expecteds[scenario_name].items():
-                expected[k[:depth]] = v
-
-        self.assertEqual(c.most_common(n=n, depth=depth), expected)
-
-    def test_groupby(self):
-        iterations = 1
-        proto = "TCP"
-        depth = 3
-
-        test_scenarios = ["simple", "shuffled", "transferred"]
-        server_ip, server_port = "10.0.0.1", "5080"
-
-        c = SIPCounter(known_servers=set(["10.0.0.2"]))
-        expecteds = []
-
-        for scenario_name in test_scenarios:
-            scenario = scenarios[scenario_name]
-            initdir = roledir[scenario[0][1]]
-            client_ip, client_port = "10.0.0.2", randipport()[1]
-
-            expected = expectations(
-                scenario,
-                client_ip=client_ip,
-                client_port=client_port,
-                server_ip=server_ip,
-                server_port=server_port,
-                msgdir=True,
-                proto=proto,
-                iterations=iterations,
-            )
-            expecteds.append(expected)
-
-            sipgen = sip_generator(
-                scenario_iterations={scenario_name: iterations},
-                client_ip=client_ip,
-                client_port=client_port,
-                server_ip=server_ip,
-                server_port=server_port,
-                initdir=initdir,
-                proto=proto,
-            )
-            for _, sipmsg, msgdir, srcip, srcport, dstip, dstport, _ in sipgen:
-                c.add(sipmsg, msgdir, srcip, srcport, dstip, dstport)
-
-        merge = partial(merge_expectations, depth=depth)
-        expected = reduce(merge, expecteds)
-
-        self.assertEqual(c.groupby(depth=depth), expected)
-
-    def test_compact(self):
-        proto = "TCP"
-        client_ip, client_port = randipport()
-        server_ip, server_port = randipport()
-        c = SIPCounter()
-        data = {
-            (server_ip, client_ip, proto, server_port, client_port): {
-                c.dirIn: Counter({"INVITE": 0}),
-                c.dirOut: Counter({"200": -1}),
-            }
-        }
-        c.update(data)
-        c.compact()
-
-        self.assertEqual(c.data, {})
+    @staticmethod
+    def merge_two_dicts(x, y):
+        z = deepcopy(x)
+        z.update(y)
+        return z
+
+    @staticmethod
+    def get_sipmsg(sipmsg=INVITE, msgdir="IN",
+                   srcip="10.0.0.2", srcport=12345,
+                   dstip="10.0.0.1", dstport=5060,
+                   proto="UDP", msgtype="INVITE", method="INVITE"):
+        sipmsg = "\n".join(x.strip() for x in sipmsg.split("\n") if x).format(proto)
+        return (sipmsg, msgdir, srcip, srcport, dstip, dstport, proto, msgtype, method)
+
+    def setUp(self):
+        self.init_c_simple()
+        self.init_c_shuffled()
+        self.init_c_canceled()
+        self.init_c_publish()
+        self.init_c_txferred()
+        self.init_c_nodir()
+
+    def init_c_simple(self):
+        data = OrderedDict([(("10.0.0.1", "10.0.0.2", "UDP", 5060, 12345),
+                                {self.dirIn:  Counter({"INVITE": 1,
+                                                          "BYE": 1})})])
+        self.c_simple = SIPCounter(name="c_simple", sip_filter=["INVITE", "BYE"],
+                                   host_filter=["10.0.0.2"], greedy=False, data=data)
+
+    def init_c_shuffled(self):
+        data = OrderedDict([(("10.0.0.1", "10.0.0.2", "UDP", 5060, 12346),
+                                {self.dirIn:  Counter({"INVITE": 1,
+                                                          "BYE": 1,
+                                                          "200": 1}),
+                                self.dirOut: Counter({"ReINVITE": 1,
+                                                           "100": 1,
+                                                           "180": 1,
+                                                           "200": 2})})])
+        self.c_shuffled = SIPCounter(name="c_shuffled", sip_filter=["INVITE", "BYE"],
+                                     data=data)
+
+    def init_c_canceled(self):
+        data = OrderedDict([(("10.0.0.1", "10.0.0.2", "TCP", 5070, 12347),
+                                {self.dirIn:  Counter({"INVITE": 1,
+                                                       "CANCEL": 1,
+                                                        "PRACK": 1,
+                                                          "ACK": 1}),
+                                 self.dirOut: Counter({"100": 1,
+                                                       "183": 1,
+                                                       "200": 2,
+                                                       "487": 1})})])
+        self.c_canceled = SIPCounter(name="c_canceled", greedy=False, data=data)
+
+    def init_c_publish(self):
+        data = OrderedDict([(("10.0.0.1", "10.0.0.3", "TLS", 8888, 6000),
+                                {self.dirIn: Counter({"200": 1}),
+                                 self.dirOut: Counter({"PUBLISH": 1})})])
+        self.c_publish = SIPCounter(name="c_publish", sip_filter=["PUBLISH", "2"],
+                                    host_exclude=["10.0.0.2"], known_ports=[8888],
+                                    greedy=False, data=data)
+
+    def init_c_txferred(self):
+        data = OrderedDict([(("10.0.0.8", "10.0.0.2", "TLS", 5071, 1234),
+                                {self.dirIn: Counter({"INVITE": 1,
+                                                       "REFER": 1}),
+                                 self.dirOut: Counter({"200": 1,
+                                                       "202": 1})})])
+        self.c_txferred = SIPCounter(name="c_txferred", sip_filter=["INVITE", "REFER", "2"],
+                                     known_servers=["10.0.0.8"], data=data)
+
+    def init_c_nodir(self):
+        data = OrderedDict([(("10.0.0.8", "10.0.0.2", "TLS", 5071, 1234),
+                                {self.dirBoth: Counter({"INVITE": 1})})])
+        self.c_nodir = SIPCounter(name="c_nodir", data=data)
+
+    def c_simple_with_zero_bye(self):
+        data = OrderedDict([(("10.0.0.1", "10.0.0.2", "UDP", 5060, 12345),
+                                {self.dirIn:  Counter({"INVITE": 1,
+                                                          "BYE": 0})})])
+        return SIPCounter(data=data)
+
+    def c_simple_without_bye(self):
+        data = OrderedDict([(("10.0.0.1", "10.0.0.2", "UDP", 5060, 12345),
+                                {self.dirIn:  Counter({"INVITE": 1})})])
+        return SIPCounter(data=data)
+
+    def c_simple_without_invite(self):
+        data = OrderedDict([(("10.0.0.1", "10.0.0.2", "UDP", 5060, 12345),
+                                {self.dirIn:  Counter({"BYE": 1})})])
+        return SIPCounter(data=data)
+
+    def c_shuffled_without_reinvite(self):
+        data = OrderedDict([(("10.0.0.1", "10.0.0.2", "UDP", 5060, 12346),
+                                {self.dirIn:  Counter({"INVITE": 1,
+                                                          "BYE": 1,
+                                                          "200": 1}),
+                                self.dirOut: Counter({"100": 1,
+                                                      "180": 1,
+                                                      "200": 2})})])
+        return SIPCounter(data=data)
+
+    def c_canceled_without_invite(self):
+        data = OrderedDict([(("10.0.0.1", "10.0.0.2", "TCP", 5070, 12347),
+                        {self.dirIn:  Counter({"CANCEL": 1,
+                                                "PRACK": 1,
+                                                  "ACK": 1}),
+                         self.dirOut: Counter({"100": 1,
+                                               "183": 1,
+                                               "200": 2,
+                                               "487": 1})})])
+        return SIPCounter(data=data)
+
+    def c_publish_without_200(self):
+        data = OrderedDict([(("10.0.0.1", "10.0.0.3", "TLS", 8888, 6000),
+                                {self.dirOut: Counter({"PUBLISH": 1})})])
+        return SIPCounter(name="c_publish", sip_filter=["PUBLISH", "2"],
+                          host_exclude=["10.0.0.2"], known_ports=[8888],
+                          greedy=False, data=data)
+
+    def test_bidir_add_sipmsg_scenario_simple(self):
+        c = self.c_simple_without_invite()
+        c.add(*self.get_sipmsg(INVITE))
+        self.assertEqual(c.data, self.c_simple.data)
+
+    def test_bidir_add_sipmsg_scenario_shuffled_detect_indialog(self):
+        c = self.c_shuffled_without_reinvite()
+        c.add(*self.get_sipmsg(sipmsg=ReINVITE, msgdir="OUT",
+                               srcip="10.0.0.1", srcport=5060,
+                               dstip="10.0.0.2", dstport=12346))
+        self.assertEqual(c.data, self.c_shuffled.data)
+
+    def test_bidir_add_sipmsg_scenario_canceled_detect_msgdir_proto(self):
+        c = self.c_canceled_without_invite()
+        t = self.get_sipmsg(sipmsg=INVITE, msgdir="IN", srcport=12347,
+                            dstport=5070, proto="TCP")
+        sipmsg, _, srcip, srcport, dstip, dstport, _, _, _ = t
+        c.add(sipmsg=sipmsg, msgdir=None, srcip=srcip, srcport=srcport,
+              dstip=dstip, dstport=dstport, proto=None)
+        self.assertEqual(c.data, self.c_canceled.data)
+
+    def test_bidir_add_sipmsg_scenario_publish_detect_msgdir_proto(self):
+        c = self.c_publish_without_200()
+        c.add(*self.get_sipmsg(sipmsg=OK, srcip="10.0.0.3", srcport=6000,
+                                dstport=8888, proto="TLS"))
+        self.assertEqual(c.data, self.c_publish.data)
+
+    def test_bidir_check_name_args(self):
+        self.assertEqual(self.c_simple.name, "c_simple")
+        self.assertEqual(self.c_shuffled.name, "c_shuffled")
+        self.assertEqual(self.c_canceled.name, "c_canceled")
+        self.assertEqual(self.c_publish.name, "c_publish")
+        self.assertEqual(self.c_txferred.name, "c_txferred")
+
+    def test_bidir_check_host_filter_args(self):
+        self.assertEqual(self.c_simple.host_filter, set(["10.0.0.2"]))
+
+    def test_bidir_check_host_exclude_args(self):
+        self.assertEqual(self.c_publish.host_exclude, set(["10.0.0.2"]))
+
+    def test_bidir_check_known_servers_args(self):
+        self.assertEqual(self.c_txferred.known_servers, set(["10.0.0.8"]))
+
+    def test_bidir_check_known_ports_args(self):
+        self.assertEqual(self.c_publish.known_ports, set([8888, 5060, 5061]))
+
+    def test_bidir_check_greedy_args(self):
+        self.assertFalse(self.c_simple.greedy)
+        self.assertTrue(self.c_shuffled.greedy)
+
+    def test_bidir_check_sip_filters_args(self):
+        self.assertEqual(self.c_simple.sip_filter, set(["INVITE", "BYE"]))
+        self.assertEqual(self.c_canceled.sip_filter, set())
+        self.assertEqual(self.c_publish.sip_filter, set(["PUBLISH", "2"]))
+        self.assertEqual(self.c_txferred.sip_filter, set(["INVITE", "REFER", "2"]))
+
+    def test_bidir_response_filter(self):
+        self.assertEqual(self.c_simple.response_filter, ())
+        self.assertEqual(self.c_shuffled.response_filter, ())
+        self.assertEqual(self.c_canceled.response_filter, ())
+        self.assertEqual(self.c_publish.response_filter, ("2",))
+        self.assertEqual(self.c_txferred.response_filter, ("2",))
+
+    def test_bidir_request_filter(self):
+        self.assertEqual(self.c_simple.request_filter, set(["INVITE", "ReINVITE", "BYE"]))
+        self.assertEqual(self.c_shuffled.request_filter, set(["INVITE", "ReINVITE", "BYE"]))
+        self.assertEqual(self.c_canceled.request_filter, set())
+        self.assertEqual(self.c_publish.request_filter, set(["PUBLISH"]))
+        self.assertEqual(self.c_txferred.request_filter, set(["INVITE", "ReINVITE", "REFER"]))
+
+    def test_bidir_total(self):
+        self.assertEqual(self.c_simple.total, 2)
+        self.assertEqual(self.c_shuffled.total, 8)
+        self.assertEqual(self.c_canceled.total, 9)
+        self.assertEqual(self.c_publish.total, 2)
+        self.assertEqual(self.c_txferred.total, 4)
+
+    def test_bidir_joinlink(self):
+        link_len5 = next(iter(self.c_simple.links()))[:5]
+        link_len4 = next(iter(self.c_shuffled.links()))[:4]
+        link_len3 = next(iter(self.c_canceled.links()))[:3]
+        link_len2 = next(iter(self.c_publish.links()))[:2]
+        link_len1 = next(iter(self.c_txferred.links()))[:1]
+        exp_len5 = "10.0.0.1=UDP=5060=12345=10.0.0.2".ljust(47)
+        exp_len4 = "10.0.0.1-UDP-5060-10.0.0.2".ljust(30)
+        exp_len3 = "10.0.0.1-TCP-10.0.0.2".ljust(30)
+        exp_len2 = "10.0.0.1-10.0.0.3".ljust(25)
+        exp_len1 = "10.0.0.8".ljust(20)
+        self.assertEqual(self.c_simple._joinlink(link_len5, sep="="),  exp_len5)
+        self.assertEqual(self.c_shuffled._joinlink(link_len4, width=30), exp_len4)
+        self.assertEqual(self.c_canceled._joinlink(link_len3, width=30), exp_len3)
+        self.assertEqual(self.c_publish._joinlink(link_len2, width=25), exp_len2)
+        self.assertEqual(self.c_txferred._joinlink(link_len1, width=20), exp_len1)
+
+    def test_bidir_msgdirs(self):
+        self.assertEqual(self.c_simple.msgdirs(), (self.dirOut, self.dirIn))
+        self.assertEqual(self.c_shuffled.msgdirs(), (self.dirOut, self.dirIn))
+
+    def test_bidir_makelink(self):
+        c1_args = ("10.0.0.2", 12345, "10.0.0.1", 5060, "UDP")
+        exp1 = (("10.0.0.1", "10.0.0.2", "UDP", 5060, 12345), self.dirIn)
+        c2_args = ("10.0.0.1", 5060, "10.0.0.2", 12346, "UDP")
+        exp2 = (("10.0.0.1", "10.0.0.2", "UDP", 5060, 12346), self.dirOut)
+        c3_args = ("10.0.0.1", 5070, "10.0.0.2", 12347, "TCP")
+        exp3 = (("10.0.0.1", "10.0.0.2", "TCP", 5070, 12347), self.dirOut)
+        self.assertEqual(self.c_simple._makelink("IN", *c1_args), exp1)
+        self.assertEqual(self.c_shuffled._makelink("OUT", *c2_args), exp2)
+        self.assertEqual(self.c_canceled._makelink(None, *c3_args), exp3)
+
+    def test_bidir_gettype_sipmsg_request(self):
+        sipmsg = self.get_sipmsg(sipmsg=ReINVITE, proto="TCP")[0]
+        exp = ("ReINVITE", "INVITE", "TCP")
+        self.assertEqual(self.c_shuffled._gettype(sipmsg), exp)
+
+    def test_bidir_gettype_sipmsg_response(self):
+        sipmsg = self.get_sipmsg(sipmsg=OK)[0]
+        exp = ("200", "PUBLISH", "UDP")
+        self.assertEqual(self.c_publish._gettype(sipmsg), exp)
+
+    def test_bidir_gettype_msgtype_method_proto(self):
+        d = {"msgtype": "200", "method": "PUBLISH", "proto": "TCP"}
+        exp = ("200", "PUBLISH", "TCP")
+        self.assertEqual(self.c_publish._gettype(**d), exp)
+
+    def test_bidir_is_host_ignorable(self):
+        self.assertTrue(self.c_simple.is_host_ignorable("10.0.0.8", "10.0.0.3"))
+        self.assertFalse(self.c_shuffled.is_host_ignorable("10.0.0.8", "10.0.0.3"))
+        self.assertFalse(self.c_publish.is_host_ignorable("10.0.0.1", "10.0.0.3"))
+        self.assertTrue(self.c_publish.is_host_ignorable("10.0.0.1", "10.0.0.2"))
+
+    def test_bidir_is_sipmsg_ignorable(self):
+        self.assertTrue(self.c_simple.is_sipmsg_ignorable("", ""))
+        self.assertFalse(self.c_simple.is_sipmsg_ignorable("ReINVITE", "INVITE"))
+        self.assertTrue(self.c_simple.is_sipmsg_ignorable("200", "BYE"))
+        self.assertFalse(self.c_shuffled.is_sipmsg_ignorable("200", "BYE"))
+        self.assertFalse(self.c_canceled.is_sipmsg_ignorable("200", "OPTIONS"))
+        self.assertTrue(self.c_publish.is_sipmsg_ignorable("404", "PUBLISH"))
+        self.assertTrue(self.c_txferred.is_sipmsg_ignorable("503", "INVITE"))
+
+    def test_bidir_add_sipmsg_sipmsg_ignorable_rv_0(self):
+        rv = self.c_simple.add(*self.get_sipmsg(sipmsg=OK))
+        self.assertEqual(rv, 0)
+
+    def test_bidir_add_sipmsg_sipmsg_not_ignorable_rv_1(self):
+        rv = self.c_publish.add(*self.get_sipmsg(sipmsg=OK, srcip="10.0.0.3",
+                                                 srcport=6000, dstport=8888))
+        self.assertEqual(rv, 1)
+
+    def test_bidir_add_msgtype_method_proto(self):
+        c = self.c_simple_without_invite()
+        t = self.get_sipmsg(sipmsg=INVITE)
+        _, msgdir, srcip, srcport, dstip, dstport, proto, msgtype, method = t
+        rv = c.add(msgdir=msgdir, srcip=srcip, srcport=srcport, dstip=dstip,
+                   dstport=dstport, proto=proto, msgtype=msgtype, method=method)
+        self.assertEqual(c.data, self.c_simple.data)
+        self.assertEqual(rv, 1)
+
+    def test_bidir_update(self):
+        c = self.c_simple_without_invite()
+        data = OrderedDict([(("10.0.0.1", "10.0.0.2", "UDP", 5060, 12345),
+                                {self.dirIn:  Counter({"INVITE": 1})})])
+        c.update(data=data)
+        self.assertEqual(c.data, self.c_simple.data)
+
+    def test_bidir_subtract_link_removed(self):
+        self.c_simple.subtract(data=self.c_simple.data)
+        self.assertEqual(self.c_simple.data, OrderedDict())
+
+    def test_bidir_subtract_nothing_removed(self):
+        data = self.c_simple.data
+        self.c_simple.subtract(data=self.c_shuffled.data)
+        self.assertEqual(self.c_simple.data, data)
+
+    def test_bidir_subtract_msgtye_removed(self):
+        c = self.c_simple_without_invite()
+        exp = self.c_simple_without_bye()
+        self.c_simple.subtract(data=c.data)
+        self.assertEqual(self.c_simple.data, exp.data)
+
+    def test_bidir_subtract_no_compact_msgtye_zeroed(self):
+        c = self.c_simple_without_invite()
+        exp = self.c_simple_with_zero_bye()
+        self.c_simple.subtract(data=c.data, compact=False)
+        self.assertEqual(self.c_simple.data, exp.data)
+
+    def test_bidir__add__(self):
+        combined = self.c_simple + self.c_shuffled
+        exp = self.merge_two_dicts(self.c_simple.data, self.c_shuffled.data)
+        self.assertEqual(combined.data, exp)
+        self.assertEqual(combined.sip_filter, self.c_simple.sip_filter)
+        self.assertEqual(combined.host_filter, self.c_simple.host_filter)
+        self.assertEqual(combined.host_exclude, self.c_simple.host_exclude)
+        self.assertEqual(combined.known_servers, self.c_simple.known_servers)
+        self.assertEqual(combined.known_ports, self.c_simple.known_ports)
+        self.assertEqual(combined.name, self.c_simple.name)
+
+    def test_bidir__add__type_mismatch(self):
+        with self.assertRaises(TypeError):
+            _ = self.c_simple + self.c_nodir
+
+    def test_bidir__sub__link_removed(self):
+        diff = self.c_simple - self.c_simple
+        self.assertEqual(diff.data, OrderedDict())
+        self.assertEqual(diff.sip_filter, self.c_simple.sip_filter)
+        self.assertEqual(diff.host_filter, self.c_simple.host_filter)
+        self.assertEqual(diff.host_exclude, self.c_simple.host_exclude)
+        self.assertEqual(diff.known_servers, self.c_simple.known_servers)
+        self.assertEqual(diff.known_ports, self.c_simple.known_ports)
+        self.assertEqual(diff.name, self.c_simple.name)
+
+    def test_bidir__sub__nothing_removed(self):
+        diff = self.c_simple - self.c_shuffled
+        self.assertEqual(diff.data, self.c_simple.data)
+
+    def test_bidir__sub__msgtye_removed(self):
+        c = self.c_simple_without_invite()
+        exp = self.c_simple_without_bye()
+        diff = self.c_simple - c
+        self.assertEqual(diff.data, exp.data)
+
+    def test_bidir__sub__type_mismatch(self):
+        with self.assertRaises(TypeError):
+            _ = self.c_simple - self.c_nodir
+
+    def test_bidir__iadd__(self):
+        self.c_simple += self.c_shuffled
+        exp = self.merge_two_dicts(self.c_simple.data, self.c_shuffled.data)
+        self.assertEqual(self.c_simple.data, exp)
+
+    def test_bidir__iadd__type_mismatch(self):
+        with self.assertRaises(TypeError):
+            self.c_simple += self.c_nodir
+
+    def test_bidir__isub__link_removed(self):
+        self.c_simple -= self.c_simple
+        self.assertEqual(self.c_simple.data, OrderedDict())
+
+    def test_bidir__isub__nothing_removed(self):
+        data = self.c_simple.data
+        self.c_simple -= self.c_shuffled
+        self.assertEqual(self.c_simple.data, data)
+
+    def test_bidir__isub__msgtye_removed(self):
+        c = self.c_simple_without_invite()
+        exp = self.c_simple_without_bye()
+        self.c_simple -= c
+        self.assertEqual(self.c_simple.data, exp.data)
+
+    def test_bidir__isubb__type_mismatch(self):
+        with self.assertRaises(TypeError):
+            self.c_simple -= self.c_nodir
+
+    def test_bidir_compare(self):
+        self.assertTrue(self.c_canceled > self.c_shuffled)
+        self.assertTrue(self.c_canceled >= self.c_simple)
+        self.assertTrue(self.c_publish < self.c_txferred)
+        self.assertTrue(self.c_publish <= self.c_simple)
+        self.assertTrue(self.c_simple != self.c_shuffled)
+        self.assertTrue(self.c_publish == self.c_simple)
+
+    def test_bidir_sum(self):
+        combined = self.c_simple + self.c_shuffled
+        self.assertEqual(combined.sum(), 10)
+        self.assertEqual(combined.sum(axis=0), [2, 8])
+        self.assertEqual(combined.sum(axis=1), [0, 2, 1, 0, 0, 2, 1, 0, 1, 0, 2, 1])
+
+    def test_bidir_max(self):
+        combined = self.c_simple + self.c_shuffled
+        self.assertTrue(combined.max(), 2)
+        self.assertTrue(combined.sum(axis=0), [1, 2])
+        self.assertTrue(combined.sum(axis=1), [0, 2, 1, 0, 0, 2, 1, 0, 1, 0, 2, 1])
+
+    def test_bidir_tocolumns(self):
+        combined = self.c_simple + self.c_shuffled
+        exp = OrderedDict([(('10.0.0.1', '10.0.0.2', 'UDP', 5060, 12345),
+                                [0, 1, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0]),
+                           (('10.0.0.1', '10.0.0.2', 'UDP', 5060, 12346),
+                                [0, 1, 1, 0, 0, 1, 1, 0, 1, 0, 2, 1])])
+        self.assertEqual(combined.tocolumns(), exp)
+
+    def test_bidir_tostring_depth_4(self):
+        combined = self.c_simple + self.c_shuffled
+        exp = "c_simple                      INVITE   ReINVITE    BYE       100       180       200    TOTAL\n                            ---> <--- ---> <--- ---> <--- ---> <--- ---> <--- ---> <---\n10.0.0.1-UDP-5060-10.0.0.2     0    2    1    0    0    2    1    0    1    0    2    1    10\nSUMMARY                        0    2    1    0    0    2    1    0    1    0    2    1    10"
+        self.assertEqual(combined.tostring(), exp)
+
+    def test_bidir_groupby_depth_4(self):
+        combined = self.c_simple + self.c_shuffled + self.c_canceled
+        exp = OrderedDict([(('10.0.0.1', '10.0.0.2', 'TCP', 5070),
+                                {self.dirIn: Counter({'INVITE': 1,
+                                                       'PRACK': 1,
+                                                      'CANCEL': 1,
+                                                         'ACK': 1}),
+                                 self.dirOut: Counter({'200': 2,
+                                                       '100': 1,
+                                                       '183': 1,
+                                                       '487': 1})}),
+                           (('10.0.0.1', '10.0.0.2', 'UDP', 5060),
+                                {self.dirIn: Counter({'INVITE': 2,
+                                                         'BYE': 2,
+                                                         '200': 1}),
+                                 self.dirOut: Counter({'200': 2,
+                                                       '100': 1,
+                                                       '180': 1,
+                                                  'ReINVITE': 1})})])
+
+        self.assertTrue(combined.groupby(), exp)
+
+    def test_bidir_groupby_depth_2(self):
+        combined = self.c_simple + self.c_shuffled + self.c_canceled
+        exp = OrderedDict([(('10.0.0.1', '10.0.0.2'),
+                            {self.dirIn: Counter({'INVITE': 3,
+                                                     'BYE': 2,
+                                                     '200': 1,
+                                                   'PRACK': 1,
+                                                  'CANCEL': 1,
+                                                     'ACK': 1}),
+                             self.dirOut: Counter({'200': 4,
+                                                   '100': 2,
+                                                   '180': 1,
+                                              'ReINVITE': 1,
+                                                   '183': 1,
+                                                   '487': 1})})])
+        self.assertEqual(combined.groupby(depth=2), exp)
+
+    def test_bidir_most_common_depth_4_n_1(self):
+        combined = self.c_simple + self.c_shuffled + self.c_canceled
+        exp = OrderedDict([(('10.0.0.1', '10.0.0.2', 'UDP', 5060),
+                                {self.dirIn: Counter({'INVITE': 2,
+                                                         'BYE': 2,
+                                                         '200': 1}),
+                                 self.dirOut: Counter({'200': 2,
+                                                       '100': 1,
+                                                       '180': 1,
+                                                  'ReINVITE': 1})})])
+        self.assertEqual(combined.most_common(n=1), exp)
+
+    def test_bidir_most_common_depth_5_n_2(self):
+        combined = self.c_simple + self.c_shuffled + self.c_canceled
+        exp = OrderedDict([(('10.0.0.1', '10.0.0.2', 'TCP', 5070, 12347),
+                                {self.dirIn: Counter({'INVITE': 1,
+                                                       'PRACK': 1,
+                                                      'CANCEL': 1,
+                                                         'ACK': 1}),
+                                 self.dirOut: Counter({'200': 2,
+                                                       '100': 1,
+                                                       '183': 1,
+                                                       '487': 1})}),
+                           (('10.0.0.1', '10.0.0.2', 'UDP', 5060, 12346),
+                                {self.dirIn: Counter({'INVITE': 1,
+                                                         '200': 1,
+                                                         'BYE': 1}),
+                                 self.dirOut: Counter({'200': 2,
+                                                       '100': 1,
+                                                       '180': 1,
+                                                  'ReINVITE': 1})})])
+        self.assertEqual(combined.most_common(n=2, depth=5), exp)
+
+    def test_bidir_tocsv_depth_5_with_header(self):
+       combined = self.c_simple + self.c_shuffled
+       combined.tocsv(filepath=self.csvfile)
+       size = os.stat(self.csvfile).st_size
+       self.assertEqual(size, 273)
+       os.remove(self.csvfile)
 
 
 if __name__ == "__main__":

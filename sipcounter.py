@@ -1,34 +1,192 @@
+# -*- coding: utf-8 -*-
 """SIPCounter: counts SIP messages."""
 
-import re
-from collections import defaultdict, Counter, OrderedDict
+from __future__ import print_function
+from collections import Counter, OrderedDict
 from copy import deepcopy
-from itertools import chain
-from operator import itemgetter
+import csv
+import pickle
+import sys
 
 __version__ = "0.0.1"
 
 
+class SIPMessage(object):
+    """Simple SIP message object to retrieve message body properties,
+    headers easily and to provide a way to extend functionality in
+    the future.
+    """
+    def __init__(self, body):
+        self._str = str(body).lstrip()
+
+    @property
+    def size(self):
+        """int: returns the size of the message"""
+        return len(self._str)
+
+    def request(self):
+        """str: retrieves request type."""
+        if self.is_request():
+            space = self._str.find(" ")
+            if space >= 0:
+                req = self._str[0:space]
+                if req == "INVITE" and self.is_indialog_request():
+                    req = "ReINVITE"
+                return req
+        return "UNKNOWN"
+
+    def response(self):
+        """str: retrieves response type."""
+        if self.is_response():
+            start = self._str.find(" ") + 1
+            if start >= 1:
+                end = self._str.find(" ", start)
+                if end == -1:
+                    end = self._str.find("\n")
+                if end > start:
+                    return self._str[start:end]
+        return "UNKNOWN"
+
+    def method(self):
+        """str: retrieves method type from CSeq header."""
+        hdr = self.header("CSeq")
+        if hdr:
+            start = hdr.find(" ")
+            if start >= 0:
+                return hdr[start+1:].rstrip()
+            elif self.is_request():
+                return self.request()
+        return "UNKNOWN"
+
+    def protocol(self):
+        """str: retrieves protocol type from top Via header."""
+        hdr = self.header("Via")
+        if not hdr:
+            hdr = self.header("v")
+        if hdr:
+            start = hdr.find('/2.0/')
+            if start >= 1:
+                end = hdr.find(' ', start)
+                return hdr[start+5:end]
+        return "UDP"
+
+    def header(self, header_name):
+        """Retrieves the requested header.
+
+        Args:
+            header_name (str): header name without ":" to be retrieved
+
+        Returns:
+            str: requested header line
+        """
+        start = self._str.find(header_name + ':')
+        if start == -1:
+            return None
+        end = self._str.find("\n", start)
+        if end == -1:
+            end = self.size
+        return self._str[start+len(header_name)+1:end].strip()
+
+    def header_param(self, header_name, param):
+        """Retrieves a specific parameter from the requested header.
+
+        Args:
+            header_name (str): header name without ":"
+            param (str): parameter name to retrieve from header
+
+        Returns:
+            str: parameter
+        """
+        hdr = self.header(header_name)
+        if hdr is not None:
+            start = hdr.find(param)
+            if start > -1:
+                start += len(param)
+                if hdr[start] == '=':
+                    start += 1
+                end = hdr.find(';', start)
+                if end == -1:
+                    end = len(hdr)
+                if end > 0:
+                    return hdr[start:end]
+        return None
+
+    def is_indialog_request(self):
+        """bool, None: if message has "tag" paramater in the "To" header."""
+        return None if not self.size else (
+                self.header_param("To", "tag") is not None or
+                self.header_param("t", "tag") is not None)
+
+    def is_response(self):
+        """bool, None: if message is a response."""
+        return None if not self.size else (
+               self._str.startswith(("SIP/2.0", "sip/2.0")))
+
+    def is_request(self):
+        """bool, None: if message is a request."""
+        return None if not self.size else (
+               not self.is_response())
+
+    def __contains__(self, item):
+        return item in self._str
+
+    def __len__(self):
+        return self.size
+
+    def __str__(self):
+        return self._str
+
+
 class SIPCounter(object):
     """Implements a simple, stateless SIP message counter with optional
-    direction, IP address, protocol and port tracking. When provided with
-    the IP address/protocol/port in addition to the mandatory SIP message
-    body it counts the SIP requests and responses for each communication
-    link. A link thus is comprised of the SIP UA server and client IP
-    addresses, the transport protocol type (TLS, TCP, UDP) which can also
-    be inferred from the SIP message body if not supplied and the ports.
+    message direction, IP address, transport protocol and port tracking.
+    It can filter and count only messages of certain request or response
+    types, from certain hosts or count all except messages from/to specific
+    hosts. If updated with optional arguments in it can count the SIP
+    messages for each communication link separately. A link is comprised of
+    the IP addresses of communicating hosts, the transport protocol type
+    (TLS, TCP, UDP), which can also be inferred from the SIP message body,
+    and the ports. For example the internal self._data dictionary stores
+    the message counts in the following fashion.
+
+    {(server_ip, client_ip, protocol, server_port, client_port):
+     {<dirIn>: Counter({msgtype: int}), <dirOut>: Counter(msgtype: int})},
+     ...}
+
+    Or more specifically:
+
+    {("10.1.1.1", "10.1.1.2", "TCP", "5060", "12345"):
+     {"->": Counter({"INVITE": 1}), "<-": Counter("100": 1, "180": 1})},
+     ...}
+
+    Attributes:
+        dirIn (str): respresentation of directionality for inbound messages,
+            by default "<-"
+        dirOut (str): respresentation of directionality for outbound messages,
+            by default "->"
+        dirBoth (str): respresentation of directonality for any direction,
+            by default "<>", used when the direction of the message cannot
+            be determined nor is provided
+        local_name (str): respresentation of "server" (left) side when
+            the host IP address is not provided, by default "local"
+        remote_name (str): respresentation of "client" (right) side when
+            the host IP address is not provided, by default "remote"
+        _data (dict): stores link information and corresponding message
+            counts for In, Out or Both directions for each link
+        ORDER (dict(str:int)): maps message types to the positions of
+            columns when converting self._data to a string.
     """
     ORDER = {
         "INVITE": 0,
         "ReINVITE": 1,
-        "BYE": 2,
+        "UPDATE": 2,
         "CANCEL": 3,
-        "UPDATE": 4,
-        "NOTIFY": 5,
-        "SUBSCRIBE": 6,
-        "PUBLISH": 7,
-        "ACK": 8,
-        "PRACK": 9,
+        "PRACK": 4,
+        "BYE": 5,
+        "ACK": 6,
+        "SUBSCRIBE": 7,
+        "NOTIFY": 8,
+        "PUBLISH": 9,
         "REFER": 10,
         "OPTIONS": 11,
         "INFO": 12,
@@ -38,634 +196,885 @@ class SIPCounter(object):
         "UNKNOWN": 16,
     }
 
+    DEPTH_ERR = "depth should be an integer from 1 to 5."
+    TYPEMISMADD_ERR = "can only add SIPCounter to a SIPCounter."
+    TYPEMISMSUB_ERR = "can only subtract SIPCounter from a SIPCounter."
+    TYPEMISMDIR_ERR = "SIPCounter type mismatch."
+
     def __init__(self, **kwargs):
-        """Initializes with the following possible keyword arguments:
+        """Initializes a SIPCounter instance.
 
-        sip_filter: a collection of SIP message types, out of which is
-                    compiled a regex object to match only the request
-                    and response types provided in this collection. If
-                    not provided a default ".*" pattern is used which
-                    will match all requests and responses.
+        Args:
+            sip_filter (list(str)): a collection of SIP message types
+                of interest to count. For example to count only INVITE
+                (incl. ReINVITE) requests and any error responses of
+                INVITE dialogs:
 
-                    For example to count only INVITE and ReINVITE
-                    messages and any error responses for these requests
-                    one should pass the following tuple, list or set:
+                    c = SIPCounter(sip_filter=["INVITE", "4", "5", "6"])
 
-                    sip_filter=set(["INVITE", "ReINVITE", "4", "5", "6"])
+                Or to be more specific (all 40x and only 503 errors).
 
-                    It is also possible to be more specific. For example:
+                    c = SIPCounter(sip_filter=["INVITE", "40", "503"])
 
-                    sip_filter=set(["INVITE", "ReINVITE", "408", "503"])
+            host_filter (list(str)): a collection of IP addresses so as
+                to count only messages sent or received by these hosts.
+                For example:
 
-        host_filter: a collection of host IP addresses, if the source or
-                    destination IP address is supplied the SIP message will
-                    only be counted if either the origin (srcip) or the
-                    recipient (dstip) of the message is in this collection.
+                    c = SIPCounter(host_filter=["10.1.1.1", "10.1.1.2"])
 
-                    For example:
+            host_exclude (list(str)): a collection of host IP addresses
+                so as to not count messages sent or received by these hosts.
+                It should not be used together with "host_filter".
+                For example:
 
-                    host_filter=set(["1.1.1.1", "2.2.2.2", "3.3.3.3"])
+                c = SIPCounter(host_exclude=["10.1.1.3", "10.1.1.4"])
 
-        known_servers: a collection of host IP addesses known to be SIP
-                    servers, proxies or other SIP UA which the user would
-                    like to consider as "servers". The internal logic of
-                    this class tries to guess the server (or Local) and
-                    client (or Remote) side automatically based on the
-                    received message direction (msgdir if provided) or
-                    port number (srcport, dstport if provided). If this
-                    logic fails to determine correctly the role of the
-                    communicating parties then the data may end up being
-                    counted under a new link as opposed to an already
-                    existing link or a link (dictionary key) will be
-                    created with order swopped.
-                    This argument serves as a helper and takes precedence
-                    over any other supplied information used to guess
-                    the role of the hosts.
+            known_servers (list(str)): a collection of host IP addesses
+                known to be SIP servers, proxies or other SIP UA which
+                are to be considered the "server" side of a link. If not
+                provided the internal logic tries to guess the server
+                (or "local") and client (or "remote") side from other
+                information based on the received parameters. See self.add
+                for more info. For example:
 
-                    For example:
+                c = SIPCounter(known_servers=set(["10.1.1.1", "10.1.1.2"])
 
-                    known_servers=set(["1.1.1.2", "1.1.1.1"])
+            known_ports (list(str)): a collection of port numbers known
+                to be used by SIP servers, proxies, in addition to the
+                well-known SIP port 5060 and 5061. For example:
 
-        known_ports: a collection of port numbers known to be used by
-                    SIP servers, proxies, or entites the user would like
-                    to consider as servers. This is yet another helper
-                    set to assist in the determination of roles. This may
-                    only be required if the SIP service is not running on
-                    the well-known SIP ports which are 5060 or 5061.
+                c = SIPCounter(known_ports=["5070", "5080"])
 
-                    For example:
+            data (dict(tuple(str): dict)): a self._data like dictionary used
+                to initialize a SIPCounter instance with some prepopulated
+                links and corresponding Counters. For example:
 
-                    known_ports=set(["5070", "5080"])
-
-        data:       In rare situations there may be a need to initialize
-                    an instance with some prepopulated counts prior to
-                    incrementing the counters through the "update" or
-                    "add" methods. This argument has to have the same
-                    format as the internal self._data storeage.
-
-                    For example:
-
-                    {(
-                        "<server ip>",    # tuple of strings as key
-                        "<client ip>",
-                        "<protocol>",
-                        "<service port>",
-                        "<client port>"
-                     ):
-                        {"msgdir1" : Counter(
+                c = SIPCounter(data=
+                        {(
+                            "<server ip>",
+                            "<client ip>",
+                            "<protocol>",
+                            "<server_port>",
+                            "<client port>"
+                        ):
+                            {"dirIn": Counter(
                                                 {
-                                                  "<sip message type1>" : int,
-                                                  "<sip message type2>" : int,
+                                                    "<msgtypeA>" : int,
+                                                    "<msgtypeB>" : int,
                                                 }
                                             )
-                        },
-                        {"msgdir2" : Counter(
+                            },
+                            {"dirOut": Counter(
                                                 {
-                                                   "<sip message type1>" : int,
-                                                   "<sip message type2>" : int,
+                                                    "<msgtypeC>" : int,
+                                                    "<msgtypeD>" : int,
                                                 }
                                             )
-                        },
-                    }
+                            },
+                        }
 
-                    For example to initialize an instance with some data:
+                    Or more specifically:
 
-                    data={("1.1.1.1", "2.2.2.2", "tcp", "5060", "34556"):
-                    {"<-": Counter({"INVITE": 1, "ReINVITE": 1}),
-                     "->": Counter({"200": 1, "100": 1})}}
+                    data={("10.1.1.1", "10.1.1.2", "TCP", "5060", "12345"):
+                            {"->": Counter({"INVITE": 1, "ACK": 1, "BYE": 1}),
+                             "<-": Counter({"100": 1, "180": 1, "200": 2})}}
 
-        name:       the name of the class instance, for example it can
-                    store the name of the host where the SIP messages
-                    are captured.
+                    c = SIPCounter(data=data)
 
-        :param      sip_filter: (collection) SIP message capture filter
-                    host_filter: (collection) SIP host capture filter
-                    known_servers: (collection) known SIP servers/proxies
-                    known_ports: (collection) known SIP services ports
-                                 excluding 5060, 5061
-                    data: (dict) to prepopulate self._data
-                    name: (string) name of the instance
+            name (str): the name of the class instance. For example:
+
+                c = SIPCounter(name="SBC Cone-A INVITE only",
+                               sip_filter=["INVITE", "2", "3", "4", "5", "6"])
+
+            greedy (bool): to count response messages of requests provided
+                in sip_filter implicitely unless a reponse message type is
+                also given in sip_filter explicitely.
+
+        Returns:
+            obj (SIPCounter): a SIPCounter class instance.
         """
-        self.sip_filter = set(kwargs.get("sip_filter", [".*"]))
-        self.host_filter = set(kwargs.get("host_filter", []))
-        self.known_servers = set(kwargs.get("known_servers", []))
-        self.known_ports = set(str(x) for x in kwargs.get("known_ports", []))
-        self._data = kwargs.get("data", {})
-        self.name = str(kwargs.get("name", ""))
         self.dirIn = "<-"
         self.dirOut = "->"
         self.dirBoth = "<>"
-        self.local = "local"
-        self.remote = "remote"
-        self.known_ports = self.known_ports | set(["5060", "5061"])
-        self.reSIPFilter = re.compile(r"(%s)" % "|".join(self.sip_filter))
-        self.reReINVITE = re.compile(r"(To:|t:) .*(tag=)", re.MULTILINE)
-        self.reCSeq = re.compile(r"CSeq: \d+ (\w+)", re.MULTILINE)
-        self.reVia = re.compile(r"(Via:|v:) SIP/2.0/(.*) ", re.MULTILINE)
+        self.local_name = "local"
+        self.remote_name = "remote"
+        self.name = str(kwargs.get("name", ""))
+        self.greedy = kwargs.get("greedy", True)
+        self._data = kwargs.get("data", OrderedDict())
+        self.sip_filter = set(kwargs.get("sip_filter", []))
+        self.host_filter = set(kwargs.get("host_filter", []))
+        self.host_exclude = set(kwargs.get("host_exclude", []))
+        self.known_servers = set(kwargs.get("known_servers", []))
+        self.known_ports = set(int(x) for x in kwargs.get("known_ports", [])) |\
+                           set([5060, 5061])
+        self.response_filter = tuple(x for x in self.sip_filter if x.isdigit())
+        self.request_filter = set(x for x in self.sip_filter if not x.isdigit())
+        if "INVITE" in self.request_filter:
+            self.request_filter.add("ReINVITE")
 
     @property
     def data(self):
-        """Returns the internal self._data.
-        :return: (dict)
-        """
+        """dict: getter method for self._data."""
         return self._data
 
     @property
     def total(self):
-        """Sums up all the Counter() objects found in self._data.
-        :return: (int)
+        """int: total sum of all Counter values in self._data."""
+        return self.sum()
+
+    @staticmethod
+    def _joinlink(link, width=47, sep="-"):
+        """Concatenates link tuple values to a string depending on the
+        number of values in the tuple. For example a link like this:
+
+        (server_ip, client_ip, proto, server_port, client_port)
+
+        is returned as:
+
+        "server_ip<sep>proto<sep>server_port<sep>client_port<sep>client_ip "
+
+        left justitifed to width or with less values in the tuple:
+
+        "server_ip<sep>proto<sep>server_port<sep>client_ip                 "
+        "server_ip<sep>proto<sep>client_ip                                 "
+        "server_ip<sep>client_ip                                           "
+        "server_ip                                                         "
+
+        Args:
+            link (tuple(str)): tuple of 5 or less string values
+                containing the server and client IP, transport protocol,
+                server and client side port numbers
+            width (int, optional): width of the resulting string
+            sep (str, optional): separator string
+
+        Returns:
+            str: concatenated values of link tuple separated by sep.
         """
-        return sum(
-            z for x in self._data.values() for y in x.values() for z in y.values()
-        )
+        seq = [0]
+        if 2 <= len(link) <= 5:
+            seq += list(range(-(len(link) - 2), 0)) + [1]
+        return sep.join(str(link[i]) for i in seq if str(link[i])).ljust(width)
 
-    def add(self, sipmsg, msgdir=None, *args):
-        """Populate the Counters with a SIP message.
-        :param sipmsg: (string) the SIP message body
-        :param msgdir: (string) indicates the direction of the message
-                        and consequently the order in which the hosts
-                        (if provided) are placed in the self._data
-                        dictionary as key. The direction can
-                        be "IN" for incoming or else for outgoing.
-        :param args:   (tuple of strings) contains the details of the
-                        communicating parties in the order shown below:
+    def msgdirs(self, data=None):
+        """Returns the expected labels of message directions so as to know
+        if the instance of this calls is direction aware or not.
 
-                        (srcip, srcport, dstip, dstport, [proto])
+        Args:
+            data (dict, optional): self._data like dictionary
 
-                        the [proto]col is optional, if not provided it
-                        will be extracted from the top Via header.
-
-                        For example both are valid for args:
-
-                        ("1.1.1.1", "5060", "2.2.2.2", "34556", "TCP")
-                        ("1.1.1.1", "5060", "2.2.2.2", "34556")
-
-                        In the example above since the srcport is a
-                        well-known SIP service port and the other is not
-                        and the known_servers keyword argument or the lack
-                        of it also does not indicate neither IP address
-                        to be a server, furthermore nor does the
-                        known_ports keyword argument dictate otherwise
-                        the SIP message will be counted towards the
-                        following link in self._data with key:
-
-                        ("1.1.1.1", "2.2.2.2", "tcp", "5060", "34556")
-
-                        Any further messages between these two entities
-                        using parameters listed in the tuple above will
-                        be counted under the same key.
-        :return: None
+        Returns:
+            tuple: direction labels expected to be seen in self._data
         """
-        sipmsg = sipmsg.lstrip()
-        if args:
-            (srcip, srcport, dstip, dstport), proto = args[0:4], args[4:]
-            if self.host_filter and (
-                srcip not in self.host_filter and dstip not in self.host_filter
-            ):
-                return
-        if sipmsg.startswith("SIP"):
-            msgtype = sipmsg.split(" ", 2)[1]
-        else:
-            msgtype = sipmsg.split(" ", 1)[0]
-            if msgtype == "INVITE" and self.reReINVITE.search(sipmsg):
-                msgtype = "ReINVITE"
-        m = self.reCSeq.search(sipmsg)
-        if m:
-            method = m.group(1)
-        elif msgtype[0].isdigit():
-            method = "UNKNOWN"
-        else:
-            method = msgtype
+        if data is None:
+            data = self._data
 
-        # Determining direction
-        if msgdir is not None:
-            if msgdir.upper() == "IN":
-                msgdir = self.dirIn
-            else:
-                msgdir = self.dirOut
-        elif args:
+        if not data:
+            return ()
+
+        found = set(next(iter(data.values())).keys())
+        if set([self.dirOut, self.dirIn]) & found:
+            return (self.dirOut, self.dirIn)
+        elif set([self.dirBoth]) & found:
+            return (self.dirBoth,)
+        return tuple(found)
+
+    def _makelink(self, msgdir=None, srcip=None, srcport=None,
+                 dstip=None, dstport=None, proto=None):
+        """Builds the link tuple of 5 values from the supplied arguments
+        by determining the server/client. The resulting tuple looks like
+        as follows and serves as key in self._data dictionary:
+
+        (server_ip, client_ip, proto, server_port, client_port)
+
+        If srcip, srcport, dstip, dstport are not provided the resulting
+        link will in the following format:
+
+        (self.local_name, self.remote_name, proto, "", "")
+
+        Args:
+            msgdir (str, optional): message direction, "IN" or "OUT"
+            srcip (str, optional): source IP address
+            srcport (int, optional): source SIP port
+            dstip (str, optional): destination IP address
+            dstport (int, optional): destination SIP port
+            proto (str, optional): protocol type, "TCP" or "TLS" or "UDP"
+
+        Returns:
+            tuple: of a tuple of 5 values (link) and a string (keystr)
+        """
+        if msgdir is not None and msgdir.upper() == "IN":
+            keystr = self.dirIn
+        elif msgdir is not None and msgdir.upper() == "OUT":
+            keystr = self.dirOut
+        elif srcip and dstip and srcport and dstport:
+            # Just in case
+            srcport = int(srcport)
+            dstport = int(dstport)
             if self.known_servers:
                 if srcip in self.known_servers:
-                    msgdir = self.dirOut
+                    keystr = self.dirOut
                 elif dstip in self.known_servers:
-                    msgdir = self.dirIn
-            elif self.known_ports:
-                if str(dstport) in self.known_ports:
-                    msgdir = self.dirIn
-                elif str(srcport) in self.known_ports:
-                    msgdir = self.dirOut
+                    keystr = self.dirIn
             else:
-                if int(srcport) > int(dstport):
-                    msgdir = self.dirIn
-                elif int(srcport) < int(dstport):
-                    msgdir = self.dirOut
-                elif srcip > dstip:
-                    msgdir = self.dirIn
+                if dstport in self.known_ports:
+                    keystr = self.dirIn
+                elif srcport in self.known_ports:
+                    keystr = self.dirOut
+                elif srcport > dstport:
+                    keystr = self.dirIn
+                elif srcport < dstport:
+                    keystr = self.dirOut
                 else:
-                    msgdir = self.dirOut
+                    keystr = self.dirIn
         else:
-            msgdir = self.dirBoth
+            keystr = self.dirBoth
 
-        # Determining server/client side
-        if args:
-            if msgdir == self.dirIn:
-                link = [dstip, srcip]
-            else:
-                link = [srcip, dstip]
-
-            # Determining server/client ports
-            if str(srcport) in self.known_ports:
-                service_port = srcport
-                client_port = dstport
-            elif str(dstport) in self.known_ports:
-                service_port = dstport
-                client_port = srcport
-            elif int(srcport) > int(dstport):
-                service_port = dstport
-                client_port = srcport
-            else:
-                service_port = srcport
-                client_port = dstport
+        if keystr == self.dirOut:
+            server_ip = srcip or self.local_name
+            server_port = (srcport if srcport else "")
+            client_ip = dstip or self.remote_name
+            client_port = (dstport if dstport else "")
         else:
-            link = [self.local, self.remote]
-            service_port, client_port = "", ""
+            server_ip = dstip or self.local_name
+            server_port = (dstport if dstport else "")
+            client_ip = srcip or self.remote_name
+            client_port = (srcport if srcport else "")
 
-        # Determining protocol
-        if args and proto:
-            proto = proto[0]
-        else:
-            m = self.reVia.search(sipmsg)
-            if m:
-                proto = m.group(2)
-            else:
-                proto = "UDP"
-        link.extend([proto.upper(), str(service_port), str(client_port)])
-        if self.reSIPFilter.match(method) and self.reSIPFilter.match(msgtype):
-            (
-                self._data.setdefault(tuple(link), {})
-                .setdefault(msgdir, Counter())
-                .update([msgtype])
-            )
+        proto = proto or ""
+        link = (server_ip, client_ip, proto, server_port, client_port)
+        return link, keystr
 
-    def update(self, iterable):
-        """Updates the internal Counters directly . It is unlikely to be used
-        often directly bypassing the logic of 'add' method.
-        :param iterable: (dict) of the same type as the self._data
-                         it's primary purpose is to allow access to the
-                         internal collections.Counters in order to update
-                         their values directly post initialization.
+    def _gettype(self, sipmsg=None, msgtype=None, method=None, proto=None):
+        """Retrives msgtype, method and proto from the supplied arguments.
 
-                         For example:
+        Args:
+            sipmsg (str, optional): SIP message body
+            msgtype (str, optional): message type if sipmsg is not provided
+            method (str, optional): method type if sipmsg is not provided
+            proto (str, optional): protocol type, "TCP" or "TLS" or "UDP"
 
-                         {("1.1.1.1", "2.2.2.2", "tcp", "5060", "34556"):
-                         {"<-": Counter({"UPDATE": 1, "ReINVITE": 1}),
-                         "->": Counter({"200": 1, "100": 1})}}
-
-        :return: None
+        Returns:
+            tuple: of 3 string values: msgtype, method, proto
         """
-        if isinstance(iterable, dict):
-            for k, v in iterable.items():
+        if sipmsg:
+            sipmsg = SIPMessage(sipmsg)
+            method = sipmsg.method()
+            proto = sipmsg.protocol().upper()
+            if sipmsg.is_response():
+                msgtype = sipmsg.response()
+            else:
+                msgtype = sipmsg.request()
+
+        elif not method and not msgtype:
+            method = "UNKNOWN"
+            msgtype = "UNKNOWN"
+
+        proto = proto or "UDP"
+        return msgtype, method, proto
+
+    def is_host_ignorable(self, srcip, dstip):
+        """Determines whether the SIP message should be discarded
+        based on self.host_filter or self.host_exclude or not.
+
+        Args:
+            srcip (str): source IP address
+            dstip (str): destination IP address
+
+        Returns:
+            bool: True=ignorable, False=not ignorable
+        """
+        if self.host_filter:
+            if (srcip not in self.host_filter and
+                dstip not in self.host_filter):
+                return True
+
+        if self.host_exclude:
+            if (srcip in self.host_exclude or
+                dstip in self.host_exclude):
+                return True
+        return False
+
+    def is_sipmsg_ignorable(self, msgtype, method):
+        """Determines whether the SIP message should be counted
+        based on the values of self.sip_filter and self.greedy.
+
+        Args:
+            msgtype (str): SIP request or response type
+            method (str): SIP method type (method from CSeq header)
+
+        Returns:
+            bool: True=ignorable, False=not ignorable
+        """
+        if not msgtype and not method:
+            return True
+
+        # Allow implicit responses only or all if filter is empty
+        if (self.greedy and msgtype[0].isdigit() and
+           (not self.request_filter or method in self.request_filter) and
+           (not self.response_filter or msgtype.startswith(self.response_filter))):
+            return False
+
+        # Allow explicit responses only or all if filter is empty
+        if (not self.greedy and msgtype[0].isdigit() and
+        ((self.response_filter and msgtype.startswith(self.response_filter) and
+         (not self.request_filter or method in self.request_filter)) or
+         (not self.request_filter and not self.response_filter))):
+            return False
+
+        # Allow explicit requests only or all if filter is empty
+        if (not msgtype[0].isdigit() and
+           ((self.request_filter and method in self.request_filter) or
+            (not self.response_filter and not self.request_filter))):
+            return False
+
+        return True
+
+    def add(self, sipmsg=None, msgdir=None, srcip=None, srcport=None,
+            dstip=None, dstport=None, proto=None, msgtype=None, method=None):
+        """Updates the Counters with a SIP message.
+
+        Args:
+            sipmsg (str, optional): SIP message body
+            msgdir (str, optional): message direction, "IN" or "OUT"
+            srcip (str, optional): source IP address
+            srcport (int, optional): source SIP port
+            dstip (str, optional): destination IP address
+            dstport (int, optional): destination SIP port
+            proto (str, optional): protocol type, "TCP" or "TLS" or "UDP"
+            msgtype (str, optional): message type if sipmsg is not provided
+            method (str, optional): method type if sipmsg is not provided
+
+        Returns:
+            int: 1 if message is added to self._data or 0 otherwise
+        """
+        if self.is_host_ignorable(srcip, dstip):
+            return 0
+
+        msgtype, method, proto = self._gettype(sipmsg, msgtype, method, proto)
+        if self.is_sipmsg_ignorable(msgtype, method):
+            return 0
+
+        link, keystr = self._makelink(msgdir, srcip, srcport, dstip, dstport, proto)
+        (self._data.setdefault(link, {})
+                .setdefault(keystr, Counter())
+                .update([msgtype]))
+        return 1
+
+    def update(self, data):
+        """Updates self._data with values of data argument. As opposed
+        to the 'add' method which adds SIP messages one by one 'update'
+        adds multiple links and corresponding values to self._data.
+
+        Note:
+            The primary purpose of this method is to increment the
+            the values of the internal Counters directly. To subtract
+            multiple values from the internl Counters use the 'subtract'
+            method.
+
+        Args:
+            data (dict): a self._data like dictionary. For example:
+
+            c = SIPCounter()
+            data = {("1.1.1.1", "2.2.2.2", "tcp", "5060", "34556"):
+                    {"<-": Counter({"UPDATE": 1, "ReINVITE": 1}),
+                     "->": Counter({"200": 1, "100": 1})}}
+            c.update(data)
+        """
+        if isinstance(data, dict):
+            for k, v in data.items():
                 for k2, v2 in v.items():
                     (self._data.setdefault(k, {})
                          .setdefault(k2, Counter())
                          .update(v2))
 
-    def subtract(self, iterable, compact=True):
-        """Subtract the iteable from the self._data store.
+    def subtract(self, data, compact=True):
+        """Updates self._data with values of data argument but it
+        subtracts the values from the internal Counters of self._data.
 
-        :param iterable: (dict) of the same type as the self._data,
-                         it's primary purpose is the same as that of
-                         the update method but instead of addition it
-                         subtracts the Counter values provided in the
-                         iterable argument frpm the internal self._data.
-                         The provided values will only be removed if
-                         self._data contains the SIP message type for
-                         the same link and same direction found in
-                         the provided iterable.
-        :param compact: (bool) if a link with all zero or less than zero
-                        values is to be removed from self._data
-        :return: None
+        Note:
+            This is unlikely to be used often directly. It's primary
+            purpose is to allow subtraction of a SIPCounter instance from
+            another SIPCounter instance using "-" or "-=" operators.
+
+        Args:
+            data (odict): a self._data like dictionary
+            compact (bool, optional): to compact self._data
         """
-        if isinstance(iterable, dict):
-            for k, v in iterable.items():
+        if isinstance(data, OrderedDict):
+            for k, v in data.items():
                 for k2, v2 in v.items():
                     if k in self._data and k2 in self._data[k]:
                         subset = {
-                            k3: v3 for k3, v3 in v2.items()
-                                        if k3 in self._data[k][k2]
-                        }
+                                    k3: v3 for k3, v3 in v2.items()
+                                    if k3 in self._data[k][k2]
+                                }
                         self._data[k][k2].subtract(subset)
             if compact:
                 self.compact()
 
     def clear(self):
-        """Clears the self._data dictionary. This can be used when for
-        example a new sampling period begins and the counting needs
-        to start from zero.
-        :return: None
-        """
+        """Clears self._data."""
         self._data.clear()
 
     def compact(self):
-        """Removes links and message types with Counter values 0 or less
-        for all message types.
+        """Compacts self._data by removing messages with values of zero or
+        less. Links having all of their Counter values with values zero or
+        less will be removed as well.
         """
-        data = {}
+        compacted = OrderedDict()
         for k, v in self._data.items():
             for k2, v2 in v.items():
                 for k3, v3 in v2.items():
                     if v3 > 0:
                         (
-                            data.setdefault(k, {})
+                            compacted.setdefault(k, {})
                             .setdefault(k2, Counter())
                             .update({k3: v3})
                         )
-        self._data = data
+        self._data = compacted
 
     def items(self):
-        """Returns the key,value pairs of the self._data dictionary.
-        :return: (iterator)
-        """
+        """iterator: returns the items of self._data."""
         return self._data.items()
 
     def keys(self):
-        """Returns the keys (aka links) of the self._data dictionary.
-        :return: (iterator)
-        """
+        """iterator: returns keys (aka links) of self._data."""
         return self._data.keys()
 
     def links(self):
-        """The same as self.keys() above.
-        :return: (iterator)
-        """
+        """iterator: same as keys() method."""
         return self.keys()
 
     def values(self):
-        """Returns the values of the self._data dictionary.
-        :return: (iterator)
-        """
+        """iterator: returns the values of self._data."""
         return self._data.values()
 
-    def groupby(self, depth=4):
-        """This method has two purposes. One is to group together the
-        links by the depth the caller looks into the self._data keys.
-        The other is to order the grouped elements. Let's assume there
-        are five separate links in the self._data as follows:
+    def msgtypes(self, data=None):
+        """Returns a list of SIP message types found in self._data
+        ordered according to the values of self.ORDER.
 
-        {("1.1.1.1", "2.2.2.2", "tcp", "5060", "33332"):  {"<-": Counter({"INVITE": 1})},
-         ("1.1.1.1", "2.2.2.2", "tcp", "5060", "33333"):  {"<-": Counter({"INVITE": 1})},
-         ("1.1.1.1", "3.3.3.3", "tcp", "5060", "33334"):  {"<-": Counter({"INVITE": 1})},
-         ("1.1.1.1", "2.2.2.2", "tcp", "5062", "33335"):  {"<-": Counter({"INVITE": 1})},
-         ("1.1.1.1", "2.2.2.2", "tls", "5061", "33336"):  {"<-": Counter({"INVITE": 1})}}
+        Args:
+            data (dict, optional): a self._data like dictionary
 
-        Calling groupby(depth=5) would only sort and return an
-        OrderedDict placing the Counters between "1.1.1.1" and "2.2.2.2"
-        first before that of "1.1.1.1" and "3.3.3.3".
+        Returns:
+            list(str): ordered unique message types
+        """
+        if data is None:
+            data = self._data
 
-        Calling groupby(depth=4), default, would not only sort the links
-        but also merge the Counters of "1.1.1.1" and "2.2.2.2" over
-        "tcp", port "5060" ignoring the client side ports. It returns:
+        m = set(k for d in data.values() for v in d.values() for k in v)
+        requests = sorted(
+                            (x for x in m if not x.isdigit()),
+                            key=lambda x: self.ORDER.get(x, len(self.ORDER)),
+                        )
+        responses = sorted((x for x in m if x.isdigit()))
+        return requests + responses
 
-        OrderedDict([.....
-        ("1.1.1.1", "2.2.2.2", "tcp", "5060"):  {"<-": Counter({"INVITE": 2})},
-        ("1.1.1.1", "2.2.2.2", "tcp", "5062"):  {"<-": Counter({"INVITE": 1})},
-        ("1.1.1.1", "2.2.2.2", "tls", "5061"):  {"<-": Counter({"INVITE": 1})},
-        ("1.1.1.1", "3.3.3.3", "tcp", "5060"):  {"<-": Counter({"INVITE": 1})},
+    def groupby(self, depth=4, data=None):
+
+        """Groups (merges) links based on the number (depth) of items
+        considered significant in the link tuples which are keys of
+        self._data. Also sorts the result by link elements in the
+        following order of importance:
+
+        server_ip, proto, server_port, client_port, client_ip
+
+        For example if self._data is:
+
+        {("1.1.1.1", "2.2.2.2", "TCP", "5060", "33332"):  {"<-": Counter({"INVITE": 1})},
+         ("1.1.1.1", "2.2.2.2", "TCP", "5060", "33333"):  {"<-": Counter({"INVITE": 1})},
+         ("1.1.1.1", "3.3.3.3", "TCP", "5060", "33334"):  {"<-": Counter({"INVITE": 1})},
+         ("1.1.1.1", "2.2.2.2", "TCP", "5062", "33335"):  {"<-": Counter({"INVITE": 1})},
+         ("1.1.1.1", "2.2.2.2", "TCP", "5061", "33336"):  {"<-": Counter({"INVITE": 1})}}
+
+        Calling groupby(depth=5) would only sort the links and return an
+        OrderedDict placing link with ("1.1.1.1", "2.2.2.2",...) before
+        ("1.1.1.1", "3.3.3.3"...).
+
+        Calling groupby(depth=4), default, would not only sort by link
+        values but also merge the Counters of all the links with key
+        containing ("1.1.1.1", "2.2.2.2", "TCP", "5060", ...) ignoring
+        the client port.
+
+        OrderedDict([
+        ("1.1.1.1", "2.2.2.2", "TCP", "5060"):  {"<-": Counter({"INVITE": 2})},
+        ("1.1.1.1", "2.2.2.2", "TCP", "5062"):  {"<-": Counter({"INVITE": 1})},
+        ("1.1.1.1", "2.2.2.2", "TLS", "5061"):  {"<-": Counter({"INVITE": 1})},
+        ("1.1.1.1", "3.3.3.3", "TCP", "5060"):  {"<-": Counter({"INVITE": 1})},
         ...])
 
-        Calling groupby(depth=3) would order and merge the Counters of
-        "1.1.1.1" and "2.2.2.2" over "tcp" regardless of the server
-        or client side ports used.
+        Calling groupby(depth=3) would merge and order the link ignoring
+        both the server and client side ports:
 
-        OrderedDict([.....
-        ("1.1.1.1", "2.2.2.2", "tcp"), {"<-": Counter({"INVITE": 3})}),
-        ("1.1.1.1", "2.2.2.2", "tls"), {"<-": Counter({"INVITE": 1})}),
-        ("1.1.1.1", "3.3.3.3", "tcp"), {"<-": Counter({"INVITE": 1})}),
+        OrderedDict([
+        ("1.1.1.1", "2.2.2.2", "TCP"), {"<-": Counter({"INVITE": 3})}),
+        ("1.1.1.1", "2.2.2.2", "TLS"), {"<-": Counter({"INVITE": 1})}),
+        ("1.1.1.1", "3.3.3.3", "TCP"), {"<-": Counter({"INVITE": 1})}),
         ...])
 
-        Calling groupby(depth=2) would merge even further the Counters
-        in addition to sorting them, ignoring the protocol as well.
+        Calling groupby(depth=2) would merge and order even further:
 
-        OrderedDict([.....
+        OrderedDict([
         ("1.1.1.1", "2.2.2.2"), {"<-": Counter({"INVITE": 4})}),
         ("1.1.1.1", "3.3.3.3"), {"<-": Counter({"INVITE": 1})}),
         ...])
 
-        And so on.
+        Args:
+            depth (int): number of values from the key tuple which are
+                considered significant during grouping.
+            data (odict, optional): a self._data like ordered dictionary
 
-        :param depth: (int) indicating how deep into the key, which is
-                      a tuple of potentially five strings elements,
-                      the method should look into when grouping the
-                      Counters.
-        :return: (OrderedDict) grouped and ordered by server/client IP
-                 and protocol.
+        Returns:
+            dict: OrderedDict of grouped links
+
+        Raises:
+            ValueError: if depth is not a number from 1 to 5
         """
-        depth = max(min(5, int(depth)), 0)
+        if depth not in (1, 2, 3, 4, 5):
+            raise ValueError(self.DEPTH_ERR)
 
-        if depth == 5:
-            g = self._data
-        else:
-            g = {}
-            for link in self.keys():
-                if set(link[0:depth]).issubset(link):
-                    for k in self._data[link]:
-                        (
-                            g.setdefault(link[0:depth], {})
-                            .setdefault(k, Counter())
-                            .update(self._data[link][k])
-                        )
-        l = sorted(g.keys(), key=(depth and itemgetter(*range(0, depth))
-                                        or None))
-        return OrderedDict((k, g[k]) for k in l)
+        if data is None:
+            data = self._data
 
-    def most_common(self, n=None, depth=4):
-        """Returns an OrderedDict of the 'n' busiest links in descending
-        order. Optionally it groups (merges) links depending on how
-        many elements of the key is to be considered significant.
-        :param n: (int) how many of the busiest links to return
-        :param depth: (int) indicating how deep into the key the method
-                      should look into when grouping the links.
-        :return: (OrderedDict) grouped and ordered by server/client IP
-                 and protocol.
+        d = {}
+        for link, v in data.items():
+            for msgdir, counter in v.items():
+                (
+                    d.setdefault(link[0:depth], {})
+                     .setdefault(msgdir, Counter())
+                     .update(counter)
+                )
+        getter = lambda x: tuple(x[i] for i in (0, 2, 3, 4, 1) if len(x) > i)
+        ordered = sorted(d.keys(), key=getter, reverse=False)
+
+        return OrderedDict((k, d[k]) for k in ordered)
+
+    def most_common(self, n=None, depth=4, data=None):
+        """Orders self._data based on the sum of Counter values per link
+        and returns the "n" busiest links in descending order. Optionally
+        it groups (merges) links too.
+
+        Args:
+            n (int, optional): number of busiest links to return, if not
+                provided it returns all links ordered by total number of
+                messages.
+            depth (int, optional): depth of significance during grouping,
+                with default value 4, merging links of same clients
+                regardless of client side port.
+            data (odict, optional): a self._data like ordered dictionary
+
+        Returns:
+            odict: OrderedDict of top "n" links with highest sum
+                of message count
+
+        Raises:
+            ValueError: if depth is not a number from 1 to 5
         """
-        g = self.groupby(depth=depth)
-        d = defaultdict(int)
+        if depth not in (1, 2, 3, 4, 5):
+            raise ValueError(self.DEPTH_ERR)
 
-        for k, v in g.items():
-            for counter in v.values():
-                d[k] += sum(counter.values())
+        if data is None:
+            data = self._data
 
-        most = sorted(d, key=d.get, reverse=True)
+        data = self.groupby(depth=depth)
+        maxes = self.sum(axis=0, data=data)
+        idx = sorted(list(zip(maxes, range(len(maxes)))), reverse=True)
+        items = list(data.items())
         if n is not None:
-            most = most[0:n]
-        return OrderedDict([(x, g[x]) for x in most])
+            idx = idx[0:n]
 
-    def summary(self, data=None, title="SUMMARY"):
-        """Returns a dictionary with the summary of all Counters for
-        each SIP message type in self._data or on the optional
-        self._data like "data" dictionary.
-        :param data: (dict) optional self._data like dictionary
-        :param title: (string) optional key name of the dictionary
-        :return: (dict) with the summary of all Counters.
+        return OrderedDict(items[i[1]] for i in idx)
+
+    def sum(self, axis=None, data=None):
+        """Sum of link Counters over a given axis.
+
+        axis=0 operates horizontally across the Counters of a link
+        axis=1 operates downwards, across message types for each direction
+        axis=None sums all the Counters in self._data
+
+        Note:
+            This method returns a list because self._data or optional
+            data argument is and supposed to be an OrderedDict and so
+            the order of values is the same as the links in self.data.
+
+        Args:
+            axis (int, optional): axis along which the sum is calculated,
+                possible values 0, 1 or None
+            data (dict, optional): a self._data like dictionary
+
+        Returns:
+            int, list(int): if axis is None an integer, otherwise a list
         """
         if data is None:
             data = self._data
-        # d = OrderedDict({(title,) : {}})
-        d = {(title,): {}}
 
-        for v in data.values():
-            for direction, counter in v.items():
-                d[(title,)].setdefault(direction, Counter()).update(counter)
-        return d
+        cols = self.tocolumns(data)
+        if axis == 0 or axis == "index":
+            return [sum(v) for v in cols.values()]
+        elif axis == 1 or axis == "columns":
+            return [sum(v) for v in zip(*cols.values())]
+        return sum(sum(v) for v in zip(*cols.values()))
 
-    def elements(self, data=None):
-        """Returns a list of SIP message types found in self._data or
-        in the optionally provided self._data like "data" dictionary.
-        :param data: (dict) optional self._data like dictionary
-        :return: (list) list of strings of all the SIP message types
+    def max(self, axis=None, data=None):
+        """Returns the maximum over a given axis.
+
+        axis=0 operates horizontally across the Counters of a link
+        axis=1 operates downwards, across message types for each direction
+        axis=None finds maximum across all the Counters in self._data
+
+        Note:
+            This method returns a list because self._data or optional
+            data argument is and supposed to be an OrderedDict and so
+            the order of values is the same as the links in self.data.
+
+        Args:
+            axis (int, optional): axis along which the max is located,
+                possible values 0, 1 or None
+            data (dict, optional): a self._data like dictionary
+
+        Returns:
+            int, list(int): if axis is None an integer, otherwise a list
         """
         if data is None:
             data = self._data
 
-        s = set(x for s in data.values() for y in s.values() for x in y)
-        requests = sorted(
-            (x for x in s if not x.isdigit()),
-            key=lambda x: self.ORDER.get(x, len(self.ORDER)),
-        )
-        responses = sorted((x for x in s if x.isdigit()))
-        return requests + responses
+        cols = self.tocolumns(data)
+        if axis == 0 or axis == "index":
+            return [max(v) for v in cols.values()]
+        elif axis == 1 or axis == "columns":
+            return [max(v) for v in zip(*cols.values())]
+        return max(count for v in cols.values() for count in v)
 
-    def pprint(self, depth=4, title="", header=True, links=True, summary=True,
-               data=None):
+    def tocolumns(self, data=None):
+        """Transforms link Counters to a list of Counter values for
+        each possible message type and direction. For example for a
+        grouped (depth=4, without client port) optional data argument:
+
+        {("10.1.1.1", "10.1.1.2", "TCP", "5060"):  {"->": Counter({"BYE": 1})},
+         ("10.1.1.1", "10.1.1.3", "TCP", "5060"):  {"<-": Counter({"200": 1})},
+
+        or more descriptively
+                                                    BYE  BYE  200  200
+                                                    OUT   IN  OUT   IN
+        ("10.1.1.1", "10.1.1.2", "TCP", "5060")       1    0    0    0
+        ("10.1.1.1", "10.1.1.3", "TCP", "5060")       0    0    0    1
+
+        would return the following dict:
+
+        {("10.1.1.1", "10.1.1.2", "TCP", "5060"): [1, 0, 0, 0],
+         ("10.1.1.1", "10.1.1.3", "TCP", "5060"): [0, 0, 0, 1],
+        }
+
+        Args:
+            data (odict, optional): self._data like ordered dictionary
+
+        Returns:
+            odict: with links as keys and list if integers as values
+            each corresponding to a possible combination of message
+            type and direction and Counter value for that combination.
         """
-        A convenience method to provide a basic easy to read output of
-        the self._data dictionary.
-        :param depth: (int) indicating how deep into the key, the method
-                      should look into when grouping the links.
-        :param title: (string) optional information to print inline
-                      with top line, for example a timestamp
-        :param header: (bool) if the header is to be printed
-        :param links: (bool) if the individual links are to be printed
-        :param summary: (bool) if summary line is to be printed
-        :param data: (dict) optional self._data like dictionary to pprint
+        if data is None:
+            data = self._data
 
-                     For example to pprint the busiest 5 links:
+        cols = OrderedDict()
+        msgdirs = self.msgdirs()
+        msgtypes = self.msgtypes()
 
-                     print(sipcounter.pprint(data=sipcounter.most_common(n=5)))
+        for link, v in data.items():
+            for m in msgtypes:
+                for d in msgdirs:
+                    cols.setdefault(link, []).append(v.get(d, {}).get(m, 0))
+        return cols
 
-        :return: (string) a formated representation of self._data
+    def tostring(self, depth=4, title="", sep="-", name=True, header=True,
+                 links=True, summary=True, sortby_total=False, link_margin=1,
+                 zeros=True, data=None):
+        """Converts self._data to a tabulated string for pretty printing.
+
+        Args:
+            depth (int, optional): indicating how deep into the key
+                to look into when grouping the links, values 1 to 5
+            title (str, optional): extra information to print inline
+                with top line, for example a timestamp, location, etc
+            sep (str, optional): separator between IP, protocol and port
+            name (bool, optional): to include SIPCounter name
+            header (bool, optional): to include header
+            links (bool, optional): to include links
+            summary (bool, optional): to include horizonal/vertical summary
+            sortby_total (bool, optional): to sort by sum of link Counters
+            link_margin (int, optional): number of spaces between the links
+                and the first SIP message column
+            zeros (bool, optional): show 0 counts instead of blanks
+            data (dict, optional): self._data like dictionary
+
+        Returns:
+            str: tabulated string representation of self._data
+
+        Raises:
+            ValueError: if depth is not a number from 1 to 5
         """
-        output = []
+        if depth not in (1, 2, 3, 4, 5):
+            raise ValueError(self.DEPTH_ERR)
+
+        if data is None:
+            if sortby_total:
+                data = self.most_common(depth=depth)
+            else:
+                data = self.groupby(depth=depth)
+
+        if not data:
+            return ""
+
+        out = []
+        msgdirs = self.msgdirs(data=data)
+        msgtypes = self.msgtypes(data=data)
+        nofdirs = len(msgdirs)
+        zero = 0 if zeros else ""
+
+        longestnum = len(str(self.sum(data=data)))
+        longestmsg = max(len(x) for x in msgtypes)
+        longestlnk = max(len(sep.join(str(x) for x in k)) for k in data.keys())
+        longestcol = max(longestnum * nofdirs, longestmsg)
+
+        column_width = int(round(longestcol / float(nofdirs)) * nofdirs) + 1
+        link_width = (max(longestlnk * int(links), len(title), len(self.name))
+                      + link_margin)
+
+        if header:
+            counter_name = self.name if name else ""
+            o = [counter_name.ljust(link_width)]
+            o.extend([elem.center(column_width) for elem in msgtypes])
+            out.append(o)
+
+            o = [title.ljust(link_width)]
+            for _ in msgtypes:
+                for i in range(nofdirs):
+                    o.append("".join((msgdirs[i][0],
+                                      (column_width // nofdirs - 2) * "-",
+                                      msgdirs[i][1:])))
+            out.append(o)
+
+        if links:
+            for link, cols in self.tocolumns(data).items():
+                o = [self._joinlink(link, width=link_width, sep=sep)]
+                for col in cols:
+                    col = (zero if col == 0 else col)
+                    o.append((str(col).rjust(column_width // nofdirs)))
+                out.append(o)
+
+        if summary:
+            total = self.sum(data=data)
+            linksum_width = max(len("TOTAL"), len(str(total)))
+            out[0].append("TOTAL".rjust(linksum_width))
+            if links:
+                for i, linktotal in enumerate(self.sum(0, data), start=2):
+                    linktotal = (zero if linktotal == 0 else linktotal)
+                    out[i].append((str(linktotal).rjust(linksum_width)))
+            out.append(["SUMMARY".ljust(link_width)])
+
+            for coltotal in self.sum(axis=1, data=data):
+                coltotal = (zero if coltotal == 0 else coltotal)
+                out[-1].append((str(coltotal).rjust(column_width // nofdirs)))
+            out[-1].append(str(total).rjust(linksum_width))
+
+        return "\n".join(" ".join(lst) for lst in out)
+
+    def tocsv(self, filepath, header=True, depth=5, data=None):
+        """Exports self._data to CSV file in Excel dialect.
+
+        Args:
+            filepath (str): destination file name
+            depth (int, optional): indicating how deep into the key
+                to look into when grouping the links
+            header (bool, optional): to write out column names
+            data (dict, optiona): self._data like dictionary
+
+        Raises:
+            ValueError: if depth is not a number from 1 to 5
+        """
+        if depth not in (1, 2, 3, 4, 5):
+            raise ValueError(self.DEPTH_ERR)
 
         if data is None:
             data = self.groupby(depth=depth)
 
         if not data:
-            return ""
-        elif summary:
-            s = self.summary(data=data)
-            sl = len("".join(list(s.keys())[0]))
+            return
+
+        if sys.version_info.major == 3:
+            kwarg = {"mode": "w", "newline": ""}
         else:
-            s = self.most_common(depth=depth)
-            sl = 0
+            kwarg = {"mode": "wb"}
+        with open(filepath, **kwarg) as csvfile:
+            writer = csv.writer(csvfile, dialect="excel")
+            msgdirs = self.msgdirs(data)
+            if header:
+                dirmap = {self.dirOut: "OUT",
+                          self.dirIn: "IN"}
+                alink = next(iter(data.keys()))
+                linksize = len(self._joinlink(alink, sep=" ").split())
+                cols = ["server_ip", "client_ip", "proto",
+                        "server_port", "client_port"][:linksize]
+                row = self._joinlink(cols, sep=" ").split()
+                for msgtype in self.msgtypes(data):
+                    for msgdir in msgdirs:
+                        row.append(" ".join((msgtype, dirmap.get(msgdir, ""))))
+                writer.writerow(row)
 
-        if any(x for v in data.values() for x in v.keys() if x == self.dirBoth):
-            directions = 1
-        else:
-            directions = 2
+            for link, cols in self.tocolumns(data).items():
+                writer.writerow(self._joinlink(link, sep=" ").split() + cols)
 
-        m = s[list(s.keys())[0]]
-        elements = self.elements(data=data)
-        cl = max(len(str(x)) for v in m.values() for x in v.values())
-        ml = max(len(x) for x in elements)
-        ll = max((len("".join(x)) for x in data.keys())) + int(depth)
-        column_width = int(round(max(ml, cl * directions) / 2) * 2) + 1
-        link_width = max(ll, len(self.name), sl, len(title)) + 1
-        if header:
-            output.append("")
-            columns = " ".join(x.center(column_width) for x in elements)
-            output.append(title.ljust(link_width) + columns)
-            if directions > 1:
-                output.append(
-                    "".join(
-                        (
-                            self.name.ljust(link_width),
-                            len(elements)
-                            * (
-                                " ".join(
-                                    (
-                                        self.dirOut.rjust(
-                                            column_width // directions, "-"
-                                        ),
-                                        self.dirIn.ljust(
-                                            column_width // directions, "-"
-                                        ),
-                                    )
-                                )
-                                + " "
-                            ),
-                        )
-                    )
-                )
-            else:
-                output.append(
-                    "".join(
-                        (
-                            self.name.ljust(link_width),
-                            len(elements)
-                            * ("".join(("-".center(column_width, "-"))) + " "),
-                        )
-                    )
-                )
-        l = []
-        if links:
-            l.append(data)
-        if summary:
-            l.append(s)
-        for d in chain(l):
-            for k in d.keys():
-                c = []
-                link = "-".join(
-                    x
-                    for x in (
-                        "".join(k[0:1]),
-                        "".join(k[2:3]),
-                        "".join(k[3:4]),
-                        "".join(k[4:5]),
-                        "".join(k[1:2]),
-                    )
-                    if x
-                )
-                for elem in elements:
-                    if directions > 1:
-                        c.append(str(d[k].get(self.dirOut, {}).get(elem, 0)))
-                        c.append(str(d[k].get(self.dirIn, {}).get(elem, 0)))
-                    else:
-                        c.append(str(d[k].get(self.dirBoth, {}).get(elem, 0)))
-                output.append(
-                    "".join(
-                        (
-                            link.ljust(link_width),
-                            " ".join(x.rjust(column_width // directions) for x in c),
-                        )
-                    )
-                )
-        output.append("")
-        return "\n".join(output)
+    def dump(self, filepath):
+        """Dumps self to a file using pickle library.
 
-    def __contains__(self, elem):
-        """Magic method to implement membership check ('in' operator)
-        :return: (bool)"""
-        elem = str(elem)
-        if "." in elem or (elem.isdigit() and len(elem) > 3):
-            return any(elem in x for x in self._data)
-        return elem in self.elements()
+        Args:
+            filepath (str): destination file including path
+        """
+        with open(filepath, "wb") as outfile:
+            pickle.dump(self, outfile)
+
+    def load(self, filepath):
+        """Loads a dumped pickle file.
+
+        Args:
+            filepath (str): source file including path
+
+        Returns:
+            SIPCounter: a SIPCounter object
+        """
+        with open(filepath, "rb") as infile:
+            obj = pickle.load(infile)
+        return obj
+
+    def __contains__(self, thing):
+        """Magic method to implement membership check ('in' operator).
+
+        Note:
+            Calling self.msgtypes() many times may be costly.
+
+        Args:
+            thing (str, int): IP address or port or SIP message type
+
+        Returns:
+            bool: indicating if elem is in self._data
+        """
+        if isinstance(thing, int) or "." in thing:
+            return any((thing in link) for link in self._data)
+        if thing in ("TLS", "TCP", "UDP", self.local_name, self.remote_name):
+            return True
+        return thing in self.msgtypes()
 
     def __add__(self, other):
-        """Magic method to add two SIPCounters together
-        :return: None"""
+        """Magic method to implement addition of two SIPCounters together.
+
+        Args:
+            other (SIPCounter): the other SIPCounter object
+        """
         if type(self) != type(other):
-            raise TypeError("can only add SIPCounter to a SIPCounter")
+            raise TypeError(self.TYPEMISMADD_ERR)
+        if not set(self.msgdirs()) & set(other.msgdirs()):
+            raise TypeError(self.TYPEMISMDIR_ERR)
+
         dup = deepcopy(self._data)
         self.update(other.data)
         new = deepcopy(self._data)
@@ -676,14 +1085,20 @@ class SIPCounter(object):
             known_servers=self.known_servers,
             known_ports=self.known_ports,
             name=self.name,
-            data=new,
+            data=new
         )
 
     def __sub__(self, other):
-        """Magic method to subtract a SiPCounter from another
-        :return: None"""
+        """Magic method to implement subtraction of a SIPCounter from another.
+
+        Args:
+            other (SIPCounter): the other SIPCounter object
+        """
         if type(self) != type(other):
-            raise TypeError("can only subtract SIPCounter from a SIPCounter")
+            raise TypeError(self.TYPEMISMSUB_ERR)
+        if not set(self.msgdirs()) & set(other.msgdirs()):
+            raise TypeError(self.TYPEMISMDIR_ERR)
+
         dup = deepcopy(self._data)
         self.subtract(other.data)
         new = deepcopy(self._data)
@@ -698,54 +1113,112 @@ class SIPCounter(object):
         )
 
     def __iadd__(self, other):
-        """Magic method to add a SIPCounter to self._data inplace
-        :return: SIPCounter object"""
+        """Magic method to implement in-place addition of a SIPCounter.
+        to self.
+
+        Args:
+            other (SIPCounter): the other SIPCounter object
+
+        Returns:
+            SIPCounter: the addition of self and other SIPCounter
+        """
         if type(self) != type(other):
-            raise TypeError("can only add SIPCounter to a SIPCounter")
+            raise TypeError(self.TYPEMISMADD_ERR)
+        if not set(self.msgdirs()) & set(other.msgdirs()):
+            raise TypeError(self.TYPEMISMDIR_ERR)
+
         self.update(other.data)
         return self
 
     def __isub__(self, other):
-        """Magic method to subtract a SIPCounter from self._data inplace
-        :return: SIPCounter object"""
+        """Magic method to implement in-place subtraction of a SIPCounter.
+        from self.
+
+        Args:
+            other (SIPCounter): the other SIPCounter object
+
+        Returns:
+            SIPCounter: the subtraction of other SIPCounter from self
+        """
         if type(self) != type(other):
-            raise TypeError("can only subtract SIPCounter from a SIPCounter")
+            raise TypeError(self.TYPEMISMSUB_ERR)
+        if not set(self.msgdirs()) & set(other.msgdirs()):
+            raise TypeError(self.TYPEMISMDIR_ERR)
+
         self.subtract(other.data)
         return self
 
     def __lt__(self, other):
-        """Magic method to implement < operator to compare two SIPCounters
-        :return: (bool)"""
+        """Magic method to implement < operator to compare two SIPCounters.
+
+        Args:
+            other (SIPCounter): the other SIPCounter object
+
+        Returns:
+            bool: if self.total is less than other.total
+        """
         return self.total < other.total
 
     def __gt__(self, other):
-        """Magic method to implement > operator to compare two SIPCounters
-        :return: (bool)"""
+        """Magic method to implement > operator to compare two SIPCounters.
+
+        Args:
+            other (SIPCounter): the other SIPCounter object
+
+        Returns:
+            bool: if self.total is greater than other.total
+        """
         return self.total > other.total
 
     def __ge__(self, other):
-        """Magic method to implement >= operator to compare two SIPCounters
-        :return: (bool)"""
+        """Magic method to implement >= operator to compare two SIPCounters.
+
+        Args:
+            other (SIPCounter): the other SIPCounter object
+
+        Returns:
+            bool: if self.total is greater or equal than other.total
+        """
         return self.total >= other.total
 
     def __le__(self, other):
-        """Magic method to implement <= operator to compare two SIPCounters
-        :return: (bool)"""
+        """Magic method to implement <= operator to compare two SIPCounters.
+
+        Args:
+            other (SIPCounter): the other SIPCounter object
+
+        Returns:
+            bool: if self.total is less or equal than other.total
+        """
         return self.total <= other.total
 
     def __eq__(self, other):
-        """Magic method to implement == operator to compare two SIPCounters
-        :return: (bool)"""
+        """Magic method to implement == operator to compare two SIPCounters.
+
+        Args:
+            other (SIPCounter): the other SIPCounter object
+
+        Returns:
+            bool: if self.total is equal to other.total
+        """
         return self.total == other.total
 
     def __ne__(self, other):
-        """Magic method to implement != operator to compare two SIPCounters
-        :return: (bool)"""
+        """Magic method to implement != operator to compare two SIPCounters.
+
+        Args:
+            other (SIPCounter): the other SIPCounter object
+
+        Returns:
+            bool: if self.total is not equal to other.total
+        """
         return self.total != other.total
 
     def __repr__(self):
-        """Magic method to return representation of SIPCounter
-        :return: (string) representation of SIPCounter
+        """Magic method to return the representation of self.
+
+        Returns:
+            str: string representation of self
         """
         r = (
             'name="%s"',
@@ -767,3 +1240,29 @@ class SIPCounter(object):
 
     def __str__(self):
         return "<%s instance at %s>" % (self.__class__.__name__, id(self))
+
+
+if __name__ == "__main__":
+    # sample output
+    data1 = OrderedDict([
+        (('local', 'remote', 'TCP', ''),
+            {'<>': Counter({'INVITE': 110, '200': 1061, '503': 4})}),
+        (('local', 'remote', 'TLS', ''),
+            {'<>': Counter({'INVITE': 10, '200': 9, '603': 1})})])
+    data2 = OrderedDict([
+        (('192.168.100.100', '192.168.100.101', 'TCP', 5060, 61011),
+            {'->': Counter({'INVITE': 100}),
+             '<-': Counter({'200': 97, '503': 3})}),
+        (('192.168.100.100', '192.168.100.101', 'TCP', 5060, 41774),
+            {'<-': Counter({'INVITE': 10}),
+             '->': Counter({'200': 9, '503': 1})}),
+        (('192.168.100.100', '192.168.100.1', 'TLS', 5060, 44564),
+            {'<-': Counter({'INVITE': 10}),
+             '->': Counter({'200': 9, '603': 1})})])
+    c1 = SIPCounter(data=data1, name="SIPCounter example simple")
+    c2 = SIPCounter(data=data2, name="SIPCounter example full")
+    print()
+    print(c1.tostring(link_margin=16, zeros=False))
+    print()
+    print(c2.tostring(title="2020-08-09 23:58:00"))
+    
