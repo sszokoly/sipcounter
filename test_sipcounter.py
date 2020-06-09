@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 from __future__ import print_function
+from collections import Counter, OrderedDict
 from copy import deepcopy
 from sipcounter import SIPCounter
-from collections import Counter, OrderedDict
-import unittest
 import os
+import unittest
 
 INVITE = """
 INVITE sip:1111@example.com SIP/2.0

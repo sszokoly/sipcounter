@@ -572,7 +572,7 @@ class SIPCounter(object):
             method.
 
         Args:
-            data (dict): a self._data like dictionary. For example:
+            data (odict): a self._data like dictionary. For example:
 
             c = SIPCounter()
             data = {("1.1.1.1", "2.2.2.2", "tcp", "5060", "34556"):
@@ -1265,4 +1265,4 @@ if __name__ == "__main__":
     print(c1.tostring(link_margin=16, zeros=False))
     print()
     print(c2.tostring(title="2020-08-09 23:58:00"))
-    
+

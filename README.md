@@ -7,16 +7,15 @@ To count the number of INVITE and ReINVITE messages and any error responses (4xx
 
 ```
 >>> from sipcounter import SIPCounter
->>> c = SIPCounter(name='SBC Cone-A',
-...                sip_filter=set(['INVITE', 'ReINVITE',
-...                                '4', '5', '6']))
+>>> reader = sip_msg_reader()
+>>> c = SIPCounter(name='SBC Cone-A', sip_filter=set(['INVITE', '4', '5', '6']))
 >>> while True:
 ...     try:
 ...         # the 'reader' is SIP log parser generator
 ...         timestamp, sipmsg, msgdir, srcip, srcport, dstip, dstport = next(reader)
 ...         c.add(sipmsg, msgdir, srcip, srcport, dstip, dstport)
 ...     except:
-...         print(c.pprint(title='2020-0101 01:01:00'))
+...         print(c.tostring(title='2020-0101 01:01:00'))
 ...         break
 KeyboardInterrupt
 
