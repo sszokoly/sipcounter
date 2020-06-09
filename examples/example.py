@@ -58,7 +58,7 @@ while True:
         p.wait()
         break
 
-print(c.pprint(title=time.strftime("%Y-%m-%d %H:%M:%S")))
+print(c.tostring(title=time.strftime("%Y-%m-%d %H:%M:%S")))
 
 # 2020-01-12 13:58:48                   OPTIONS   200
 # Localhost                             --> <-- --> <--
