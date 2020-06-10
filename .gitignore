@@ -1,5 +1,6 @@
 build/
 dist/
+test/
 .__pycache__/
 .vscode/
 .idea/

@@ -19,7 +19,7 @@ setuptools.setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     py_modules=["sipcounter"],
-    python_requires="~=2.7",
+    python_requires=">=2.7",
     keywords="VoIP telephony SIP protocol message counter",
     install_requires=[],
     classifiers=[

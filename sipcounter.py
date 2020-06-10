@@ -1240,16 +1240,20 @@ class SIPCounter(object):
             'name="%s"',
             "sip_filter=%s",
             "host_filter=%s",
+            "host_exclude=%s",
             "known_servers=%s",
             "known_ports=%s",
+            "greedy=%s",
             "data=%s",
         )
         r = ", ".join(r) % (
             self.name,
             self.sip_filter,
             self.host_filter,
+            self.host_exclude,
             self.known_servers,
             self.known_ports,
+            self.greedy,
             self._data,
         )
         return "SIPCounter(%s)" % r
