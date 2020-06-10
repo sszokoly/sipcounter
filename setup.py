@@ -15,7 +15,7 @@ setuptools.setup(
     maintainer_email="sszokoly@protonmail.com",
     license="MIT",
     url="https://github.com/sszokoly/sipcounter",
-    description="Command line SIP message counter",
+    description="SIP message counter",
     long_description=long_description,
     long_description_content_type="text/markdown",
     py_modules=["sipcounter"],
