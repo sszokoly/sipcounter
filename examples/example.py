@@ -1,18 +1,19 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
 from __future__ import print_function
-import time
 from subprocess import Popen, PIPE
 from sipcounter import SIPCounter
+import time
 
-c = SIPCounter(name="Localhost")
+c = SIPCounter(name="example")
 cmd = [
     "tshark",
     "-l",
     "-n",
     "-i",
     "any",
-    "tcp",
-    "-2",
-    "-R" "sip",
+    "-Y", 
+    "sip",
     "-E",
     "separator=|",
     "-T",
@@ -37,18 +38,18 @@ cmd = [
     "sip.Via",
 ]
 
+n = 0
 p = Popen(cmd, shell=False, stdout=PIPE, stderr=PIPE)
 while True:
     try:
-        output = p.stdout.readline()
+        output = p.stdout.readline().decode("ascii")
         if output:
             srcip, srcport, dstip, dstport, sipmsg = output.split("|", 4)
-            z = zip(
-                    ("", "CSeq: ", "To: ", "Via: "),
-                    (x for x in sipmsg.split("|") if x)
-                   )
+            z = zip(("", "CSeq: ", "To: ", "Via: "),
+                    (x for x in sipmsg.split("|") if x))
             sipmsg = "\r\n".join(("".join(x) for x in z))
-            c.add(sipmsg, None, srcip, srcport, dstip, dstport)
+            n += c.add(sipmsg, None, srcip, srcport, dstip, dstport)
+            print(n, end="\r")
         elif output == "" and p.poll() is not None:
             break
         else:
@@ -58,10 +59,5 @@ while True:
         p.wait()
         break
 
+print(end="\r")
 print(c.tostring(title=time.strftime("%Y-%m-%d %H:%M:%S")))
-
-# 2020-01-12 13:58:48                   OPTIONS   200
-# Localhost                             --> <-- --> <--
-# 10.130.93.132-TCP-5060-10.130.93.144    0   2   2   0
-# 10.130.93.131-TLS-5061-10.130.93.144    0   1   1   0
-# SUMMARY                                 0   3   3   0
