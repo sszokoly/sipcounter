@@ -64,7 +64,7 @@ class SIPMessage(object):
         if not hdr:
             hdr = self.header("v")
         if hdr:
-            start = hdr.find('/2.0/')
+            start = hdr.find("/2.0/")
             if start >= 1:
                 end = hdr.find(' ', start)
                 return hdr[start+5:end]
@@ -79,7 +79,7 @@ class SIPMessage(object):
         Returns:
             str: requested header line
         """
-        start = self._str.find(header_name + ':')
+        start = self._str.find(header_name + ":)
         if start == -1:
             return None
         end = self._str.find("\n", start)
@@ -102,9 +102,9 @@ class SIPMessage(object):
             start = hdr.find(param)
             if start > -1:
                 start += len(param)
-                if hdr[start] == '=':
+                if hdr[start] == "=":
                     start += 1
-                end = hdr.find(';', start)
+                end = hdr.find(";", start)
                 if end == -1:
                     end = len(hdr)
                 if end > 0:
@@ -140,14 +140,13 @@ class SIPMessage(object):
 class SIPCounter(object):
     """Implements a simple, stateless SIP message counter with optional
     message direction, IP address, transport protocol and port tracking.
-    It can also filter and count messages of certain request or response
-    types only or count messages from certain hosts. A link is comprised
-    of the IP addresses of communicating hosts, the transport protocol type
-    (TLS, TCP, UDP), which can also be inferred from the SIP message body,
-    and the ports. in the absence of these optional arguments a link
-    is designated by "local" and "remote" hosts. The internal self._data
-    OrderedDict stores the message counts for each link in the following
-    fashion:
+    It has filtering capabilities based on host address and message type.
+    SIP messages are counter for each link separately. A link is comprised
+    of the IP addresses of tbe communicating hosts, the transport protocol
+    type (TLS, TCP, UDP) and port numbers. If these information are not
+    available a link is designated by "local" and "remote" labels. The
+    self._data OrderedDict stores the links and the corresponding Counters.
+    For example:
 
     OrderedDict([((server_ip, client_ip, protocol, server_port, client_port),
                     {<dirIn>:  Counter({<msgtype>: int}), 
@@ -162,19 +161,19 @@ class SIPCounter(object):
      ...)]
 
     Attributes:
-        dirIn (str): respresentation of directionality for inbound messages,
+        dirIn (str): respresents the directionality of inbound messages,
             by default "<-"
-        dirOut (str): respresentation of directionality for outbound messages,
+        dirOut (str): respresents the directionality of outbound messages,
             by default "->"
-        dirBoth (str): respresentation of directonality for any direction,
-            by default "<>", used when the direction of the message cannot
-            be determined nor is provided
-        local_name (str): respresentation of "server" (left) side when
+        dirBoth (str): respresents the directonality of messesages for both
+            directions, by default "<>", used when the direction of the
+            message cannot be determined nor is provided
+        local_name (str): respresents the "server" (left) side when
             the host IP address is not provided, by default "local"
-        remote_name (str): respresentation of "client" (right) side when
+        remote_name (str): respresents the "client" (right) side when
             the host IP address is not provided, by default "remote"
-        _data (dict): stores link information and corresponding message
-            counts for In, Out or Both directions for each link
+        _data (dict): stores the message Counters for each directions
+            for each link
         ORDER (dict(str:int)): maps message types to column positions
             when converting self._data to a string.
     """
@@ -209,7 +208,7 @@ class SIPCounter(object):
         Args:
             sip_filter (list(str)): a collection of SIP message types
                 of interest to count. For example to count only INVITE
-                (incl. ReINVITE) requests and any error responses of
+                (incl. ReINVITE) requests and any error responses in those
                 INVITE dialogs:
 
                     c = SIPCounter(sip_filter=["INVITE", "4", "5", "6"])
@@ -288,7 +287,7 @@ class SIPCounter(object):
                                sip_filter=["INVITE", "2", "3", "4", "5", "6"])
 
             greedy (bool): to count all response messages of the requests provided
-                in the sip_filter implicitely unless a reponse message type is
+                in the sip_filter implicitely unless a response message type is
                 also given in the sip_filter explicitely.
 
         Returns:
@@ -359,12 +358,12 @@ class SIPCounter(object):
     def msgdirs(self, data=None):
         """Returns the expected labels of message directions so as to know
         if the instance of this class is direction aware or not.
-        For example if the message direction is not provided the returned
+        For example if message directions are not provided the returned
         tuple is:
 
         ("<>",)
 
-        otherise:
+        otherwise:
 
         ("->", "<-")
 
@@ -413,7 +412,8 @@ class SIPCounter(object):
             proto (str, optional): protocol type, "TCP" or "TLS" or "UDP"
 
         Returns:
-            tuple: of a tuple of 5 values (link) and a string (keystr)
+            tuple: tuple of 5 values (link) and a string (keystr) indicating
+                the direction of the message
         """
         if msgdir is not None and msgdir.upper() == "IN":
             keystr = self.dirIn
@@ -460,7 +460,8 @@ class SIPCounter(object):
     def _gettype(self, sipmsg=None, msgtype=None, method=None, proto=None):
         """Retrieves the msgtype, method and proto from the supplied arguments.
         If sipmsg is provided it will use that to extract the returned values.
-        Otherwise it will pass the msgtype and method back to the caller.
+        Otherwise it will pass the msgtype and method back to the caller
+        so as to skip message parsing and increment the counter right away.
 
         Args:
             sipmsg (str, optional): SIP message body
@@ -469,7 +470,7 @@ class SIPCounter(object):
             proto (str, optional): protocol type, "TCP" or "TLS" or "UDP"
 
         Returns:
-            tuple: a tuple of 3 string values: msgtype, method, proto
+            tuple: tuple of 3 string values: msgtype, method, proto
         """
         if sipmsg:
             sipmsg = SIPMessage(sipmsg)
@@ -578,14 +579,14 @@ class SIPCounter(object):
 
     def update(self, data):
         """Updates self._data with values of data argument. As opposed
-        to the 'add' method which adds SIP messages one by one 'update'
+        to the 'add' method, which adds SIP messages one by one, 'update'
         adds multiple links and corresponding values to self._data.
 
         Note:
             The primary purpose of this method is to populate the
             the values of the internal Counters directly with multiple
-            values at once. To subtract multiple values from the
-            Counters use the 'subtract' method.
+            values at once. To subtract multiple values use the
+            'subtract' method.
 
         Args:
             data (odict): a self._data like OrderedDict. For example:
@@ -687,7 +688,6 @@ class SIPCounter(object):
         return requests + responses
 
     def groupby(self, depth=4, data=None):
-
         """Groups (merges) links based on the number (depth) of items
         considered significant in the link tuples. Also sorts the result
         by link elements in the following order of importance:
@@ -738,7 +738,7 @@ class SIPCounter(object):
             data (odict, optional): a self._data like OrderedDict
 
         Returns:
-            dict: OrderedDict of grouped links
+            odict: OrderedDict of grouped links
 
         Raises:
             ValueError: if depth is not a number from 1 to 5
@@ -813,7 +813,7 @@ class SIPCounter(object):
         Args:
             axis (int, optional): axis along which the sum is calculated,
                 possible values 0, 1 or None
-            data (dict, optional): a self._data like OrderedDict
+            data (odict, optional): a self._data like OrderedDict
 
         Returns:
             int, list(int): if axis is None an integer, otherwise a list
@@ -843,7 +843,7 @@ class SIPCounter(object):
         Args:
             axis (int, optional): axis along which the max is located,
                 possible values 0, 1 or None
-            data (dict, optional): a self._data like OrderedDict
+            data (odict, optional): a self._data like OrderedDict
 
         Returns:
             int, list(int): if axis is None an integer, otherwise a list
@@ -861,7 +861,7 @@ class SIPCounter(object):
     def tocolumns(self, data=None):
         """Transforms link Counters to a list of Counter values for
         each possible message type and direction. For example for a
-        grouped (depth=4, without client port) data like this:
+        grouped (depth=4, without client ports) data like this:
 
         OrderedDict([(
          ("10.1.1.1", "10.1.1.2", "TCP", "5060"):  {"->": Counter({"BYE": 1})}),
@@ -873,19 +873,19 @@ class SIPCounter(object):
         ("10.1.1.1", "10.1.1.2", "TCP", "5060")       1    0    0    0
         ("10.1.1.1", "10.1.1.3", "TCP", "5060")       0    0    0    1
 
-        would return the following dict:
+        would be returned as:
 
         {("10.1.1.1", "10.1.1.2", "TCP", "5060"): [1, 0, 0, 0],
          ("10.1.1.1", "10.1.1.3", "TCP", "5060"): [0, 0, 0, 1],
         }
 
         Args:
-            data (odict, optional): self._data like ordered dictionary
+            data (odict, optional): self._data like OrderedDict
 
         Returns:
-            dict: with links as keys and list if integers as values
+            dict: with links as keys and list of Counter values,
             each corresponding to a possible combination of message
-            type and direction and Counter value for that combination.
+            type and direction
         """
         if data is None:
             data = self._data
@@ -1001,7 +1001,7 @@ class SIPCounter(object):
             depth (int, optional): indicating how deep into the key
                 to look into when grouping the links
             header (bool, optional): to write out column names
-            data (dict, optional): self._data like OrderedDict
+            data (odict, optional): self._data like OrderedDict
 
         Raises:
             ValueError: if depth is not a number from 1 to 5
@@ -1030,6 +1030,7 @@ class SIPCounter(object):
                 cols = ["server_ip", "client_ip", "proto",
                         "server_port", "client_port"][:linksize]
                 row = self._joinlink(cols, sep=" ").split()
+
                 for msgtype in self.msgtypes(data):
                     for msgdir in msgdirs:
                         row.append(" ".join((msgtype, dirmap.get(msgdir, ""))))
@@ -1064,9 +1065,8 @@ class SIPCounter(object):
         """Magic method to implement membership check ('in' operator).
 
         Note:
-            Calling self.msgtypes() many in a loop is best to be
-            avoided but saving the return value of this method
-            to a local variable and use that in the loop.
+            Calling self.msgtypes() many times in a loop may be
+            CPU heavy.
 
         Args:
             thing (str, int): IP address or port or SIP message type
