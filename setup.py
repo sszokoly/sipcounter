@@ -8,7 +8,7 @@ with open("README.md", "r") as fd:
 
 setuptools.setup(
     name="sipcounter",
-    version="0.0.1",
+    version="0.0.2",
     author="Szabolcs Szokoly",
     author_email="szokoly@protonmail.com",
     maintainer="Szabolcs Szokoly",
