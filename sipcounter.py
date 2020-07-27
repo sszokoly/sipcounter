@@ -8,7 +8,7 @@ import csv
 import pickle
 import sys
 
-__version__ = "0.0.2"
+__version__ = "0.0.3"
 
 
 class SIPMessage(object):
@@ -79,7 +79,7 @@ class SIPMessage(object):
         Returns:
             str: requested header line
         """
-        start = self._str.find(header_name + ":)
+        start = self._str.find(header_name + ":")
         if start == -1:
             return None
         end = self._str.find("\n", start)
